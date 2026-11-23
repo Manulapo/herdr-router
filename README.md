@@ -68,9 +68,15 @@ match = ["\\b(architect|design|rfc)\\b"]
 mode = "jev"
 ```
 
+Put the key in a private env file (works no matter how Herdr or Claude was launched):
+
 ```sh
-export OPENROUTER_API_KEY=...
+mkdir -p ~/.config/herdr-router
+echo 'OPENROUTER_API_KEY=sk-or-...' > ~/.config/herdr-router/.env
+chmod 600 ~/.config/herdr-router/.env
 ```
+
+A real environment variable takes precedence over the file. Only that file (or `$HROUTE_ENV`) is read, never a project-local `.env`. `hroute doctor` warns if it is readable by others.
 
 Rules run first; Jev is asked only when none match, with a 10 s timeout, and any failure falls back to `default_tier`. This uses the Responses API with `typesafe/jev-router` and `cost_tier = "low"` and costs OpenRouter credit for the (tiny) classification call.
 

@@ -322,3 +322,21 @@ chain = ["claude:s", "codex:m", "agy:g"]
     expect(() => parseConfig('[tiers.a]\nstrategy="random"\nchain=["claude"]')).toThrow();
   });
 });
+
+import { parseEnv, loadEnvFile } from "../src/env.ts";
+import { writeFileSync } from "node:fs";
+
+describe("env file", () => {
+  test("parses comments, export, quotes and inline comments", () => {
+    expect(parseEnv('# c\nA=1\nexport B="two words"\nC=\'x y\'\nD=val # note\nbad line\n')).toEqual({ A: "1", B: "two words", C: "x y", D: "val" });
+  });
+  test("real environment wins over the file", () => {
+    const f = join(mkdtempSync(join(tmpdir(), "hroute-e-")), ".env");
+    writeFileSync(f, "OPENROUTER_API_KEY=from-file\nOTHER=1\n");
+    const target: NodeJS.ProcessEnv = { OPENROUTER_API_KEY: "from-shell" };
+    expect(loadEnvFile(f, target)).toBe(f);
+    expect(target.OPENROUTER_API_KEY).toBe("from-shell");
+    expect(target.OTHER).toBe("1");
+    expect(loadEnvFile(join(tmpdir(), "nope.env"), {})).toBeNull();
+  });
+});

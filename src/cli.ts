@@ -5,6 +5,7 @@ import { parseArgs } from "node:util";
 import { classify } from "./classify.ts";
 import { configCandidates, findConfig, loadConfig } from "./config.ts";
 import { formatRemaining, parseDuration } from "./duration.ts";
+import { envFilePath, isTooOpen, loadEnvFile } from "./env.ts";
 import { insideHerdr } from "./herdr.ts";
 import { syncAgents } from "./agents.ts";
 import { claudeUsable, hook, mergeHooks } from "./hook.ts";
@@ -30,9 +31,11 @@ Usage:
   hroute doctor                    Check herdr, config and optional Jev key
 
 Config: $HROUTE_CONFIG, ./routing.toml, ~/.config/herdr-router/routing.toml
+Secrets: real environment first, then ~/.config/herdr-router/.env (or $HROUTE_ENV)
 `;
 
 export async function main(argv: string[]): Promise<number> {
+  loadEnvFile();
   const [cmd, ...rest] = argv;
   if (!cmd || cmd === "-h" || cmd === "--help" || cmd === "help") {
     console.log(HELP);
@@ -216,6 +219,8 @@ export async function main(argv: string[]): Promise<number> {
       for (const kind of ["claude", "codex"]) {
         console.log(`${ok(Bun.which(kind) !== null)} ${kind} on PATH`);
       }
+      const envFile = envFilePath();
+      if (existsSync(envFile)) console.log(`${isTooOpen(envFile) ? "WARN" : "ok  "} env file ${envFile}${isTooOpen(envFile) ? " is readable by others: chmod 600" : ""}`);
       console.log(`${process.env.OPENROUTER_API_KEY ? "ok  " : "info"} OPENROUTER_API_KEY ${process.env.OPENROUTER_API_KEY ? "set (Jev classifier available)" : "unset (rules-only classification)"}`);
       return 0;
     }
