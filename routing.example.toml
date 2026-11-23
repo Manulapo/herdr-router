@@ -15,13 +15,24 @@ default_max_used = 90
 probe_seconds = 10
 
 # ---- Classification --------------------------------------------------------
-# `rules` : first matching regex wins (free, instant, predictable).
-# `jev`   : rules first, then ask Jev on OpenRouter for tasks no rule matched.
-#           Needs OPENROUTER_API_KEY in the environment. Optional.
+# Regex rules always run first (free, instant). For prompts no rule matches:
+#   auto  : Jev on OpenRouter if OPENROUTER_API_KEY is set, otherwise a tiny
+#           headless Haiku call (`claude -p`, ~2s, uses your subscription)
+#   jev   : only Jev      haiku : only Haiku      rules : no LLM at all
+# Haiku is skipped while the default Claude account is parked / over threshold.
 [classifier]
-mode = "rules"
+mode = "auto"
 jev_model = "typesafe/jev-router"
 jev_cost_tier = "low"          # low | medium | high
+haiku_model = "claude-haiku-5-5"
+timeout = "15s"
+
+# Per-message hook (`hroute install-hook`): classifies each prompt and tells
+# Claude where to route it. Prompts shorter than min_chars skip the LLM step.
+[hook]
+mode = "auto"                  # "rules" = instant and free, never calls an LLM
+min_chars = 40
+session_model = ""             # e.g. "sonnet": do not suggest a subagent running the model you already use
 
 [[rules]]
 tier = "plan"

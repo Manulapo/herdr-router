@@ -39,7 +39,22 @@ export interface Config {
   defaultCooldownMs: number;
   defaultMaxUsed: number;
   probeSeconds: number;
-  classifier: { mode: "rules" | "jev"; jevModel: string; jevCostTier: string };
+  classifier: {
+    /** rules: regex only. jev / haiku: that LLM for unmatched prompts. auto: jev if OPENROUTER_API_KEY is set, else haiku. */
+    mode: "rules" | "jev" | "haiku" | "auto";
+    jevModel: string;
+    jevCostTier: string;
+    haikuModel: string;
+    timeoutMs: number;
+  };
+  hook: {
+    /** Prompts shorter than this skip the LLM classifier (rules still apply). */
+    minChars: number;
+    /** `rules` keeps the per-message hook instant and free. */
+    mode: "auto" | "rules";
+    /** Skip the subagent hint when the target model name contains this (session already runs it). */
+    sessionModel: string;
+  };
   rules: Rule[];
   accounts: Record<string, Account>;
   tiers: Record<string, Tier>;

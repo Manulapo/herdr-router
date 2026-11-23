@@ -96,8 +96,10 @@ export function parseConfig(toml: string): Config {
     return { tier: r.tier as string, match: (r.match ?? []).map((m: string) => new RegExp(m, "i")) };
   });
 
-  const mode = raw.classifier?.mode ?? "rules";
-  if (mode !== "rules" && mode !== "jev") throw new Error(`classifier.mode must be "rules" or "jev"`);
+  const mode = raw.classifier?.mode ?? "auto";
+  if (!["rules", "jev", "haiku", "auto"].includes(mode)) throw new Error(`classifier.mode must be rules, jev, haiku or auto`);
+  const hookMode = raw.hook?.mode ?? "auto";
+  if (hookMode !== "auto" && hookMode !== "rules") throw new Error(`hook.mode must be "auto" or "rules"`);
 
   return {
     defaultTier,
@@ -108,6 +110,13 @@ export function parseConfig(toml: string): Config {
       mode,
       jevModel: raw.classifier?.jev_model ?? "typesafe/jev-router",
       jevCostTier: raw.classifier?.jev_cost_tier ?? "low",
+      haikuModel: raw.classifier?.haiku_model ?? "claude-haiku-5-5",
+      timeoutMs: parseDuration(raw.classifier?.timeout ?? "15s"),
+    },
+    hook: {
+      minChars: Number(raw.hook?.min_chars ?? 40),
+      mode: hookMode,
+      sessionModel: String(raw.hook?.session_model ?? ""),
     },
     rules,
     accounts,

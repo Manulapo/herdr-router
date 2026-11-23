@@ -49,7 +49,7 @@ export async function runSub(
     }
     const proc = Bun.spawn(cmd, {
       cwd: opts.cwd,
-      env: { ...process.env, ...target.env },
+      env: { ...process.env, ...target.env, HROUTE_INNER: "1" },
       stdout: "pipe",
       stderr: "pipe",
       timeout: opts.timeoutMs,

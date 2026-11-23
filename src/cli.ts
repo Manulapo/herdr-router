@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
@@ -7,6 +7,7 @@ import { configCandidates, findConfig, loadConfig } from "./config.ts";
 import { formatRemaining, parseDuration } from "./duration.ts";
 import { insideHerdr } from "./herdr.ts";
 import { syncAgents } from "./agents.ts";
+import { claudeUsable, hook, mergeHooks } from "./hook.ts";
 import { run } from "./run.ts";
 import { runSub } from "./sub.ts";
 import { getUsage, writeClaudeUsage } from "./usage.ts";
@@ -19,6 +20,8 @@ Usage:
   hroute explain <prompt>          Show tier + fallback chain without launching anything
   hroute sub <tier> [--cwd <dir>] <task>   Headless one-shot on the first usable target (also: hsub)
   hroute sync-agents [--dir <d>]   Write Claude Code subagents hr-<tier>.md (model follows live usage)
+  hroute hook                      UserPromptSubmit hook: classify the prompt, hint Claude where to route it
+  hroute install-hook [--write]    Show (or merge, with a backup) the hooks into Claude Code's settings.json
   hroute status                    Tiers, chains, 5h usage and parked accounts
   hroute usage-sink <account>      Read statusline JSON on stdin, record the 5h usage for <account>
   hroute mark <account|target> [--for 5h]  Park an account manually, e.g. claude-work
@@ -48,6 +51,7 @@ export async function main(argv: string[]): Promise<number> {
       for: { type: "string", default: "5h" },
       json: { type: "boolean", default: false },
       dir: { type: "string" },
+      write: { type: "boolean", default: false },
       timeout: { type: "string", default: "10m" },
     },
   });
@@ -58,7 +62,8 @@ export async function main(argv: string[]): Promise<number> {
       const prompt = positionals.join(" ").trim();
       if (!prompt) throw new Error("A prompt is required");
       const { config } = loadConfig();
-      const c = await classify(prompt, config, values.tier);
+      const ctx0 = { exhausted: loadState().exhausted, usage: (t: any) => getUsage(t) };
+      const c = await classify(prompt, config, values.tier, { haikuAllowed: claudeUsable(config, ctx0) });
       const dryRun = cmd === "explain" || values["dry-run"];
       if (!dryRun && !insideHerdr()) {
         throw new Error("Not inside a Herdr pane (HERDR_ENV!=1). Run from Herdr, or use --dry-run / explain.");
@@ -105,6 +110,37 @@ export async function main(argv: string[]): Promise<number> {
         console.log(`${name === config.defaultTier ? `${name} (default)` : name}${tier.fallbackTier ? `  -> falls back to ${tier.fallbackTier}` : ""}`);
         for (const t of tier.chain) console.log(`  ${t.id}`);
       }
+      return 0;
+    }
+
+    case "hook": {
+      const { config } = loadConfig();
+      const ctx = { exhausted: loadState().exhausted, usage: (t: any) => getUsage(t) };
+      const out = await hook(await Bun.stdin.text(), config, ctx);
+      if (out) console.log(out);
+      return 0;
+    }
+
+    case "install-hook": {
+      const file = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"), "settings.json");
+      const current = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
+      const { settings, changed } = mergeHooks(current);
+      if (!changed) {
+        console.log(`${file}: hroute hooks already installed`);
+        return 0;
+      }
+      if (!values.write) {
+        const added = {
+        UserPromptSubmit: settings.hooks.UserPromptSubmit.filter((g: any) => g.hooks.some((h: any) => h.command.startsWith("hroute"))),
+        SessionStart: settings.hooks.SessionStart.filter((g: any) => g.hooks.some((h: any) => h.command.startsWith("hroute"))),
+      };
+      console.log(`Would add to ${file} (existing hooks are kept):\n${JSON.stringify(added, null, 2)}\n\nRe-run with --write to apply (a .bak copy is made).`);
+        return 0;
+      }
+      if (existsSync(file)) copyFileSync(file, `${file}.bak`);
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, JSON.stringify(settings, null, 2) + "\n");
+      console.log(`updated ${file} (backup: ${file}.bak)`);
       return 0;
     }
 

@@ -17,7 +17,7 @@ hroute run -t quick "rename foo to bar"        # explicit tier
 - **Several subscriptions.** Define accounts (two Claude logins, two Codex logins) and chain them.
 - **Switch at a usage threshold.** A target is skipped once its 5h window is e.g. 90% used, using the *real* percentage (see [Usage sources](#usage-sources)), and the chain falls through to the next account or model.
 - **Step down to something simpler.** `fallback_tier = "quick"` means: when nothing in `plan` is usable, take the `impl`/`quick` chain instead.
-- **Task-aware.** Regex rules (or optional Jev) pick the tier.
+- **Task-aware, per message.** Regex rules, then Jev or Haiku, pick the tier for each prompt.
 - **Three ways in.** `hroute run` (a new Herdr pane), `hsub` (headless one-shot, usable as a fake subagent, works across accounts and Codex), and generated Claude Code subagents.
 
 ## Why this design
@@ -73,6 +73,17 @@ export OPENROUTER_API_KEY=...
 
 Rules run first; Jev is asked only when none match, with a 10 s timeout, and any failure falls back to `default_tier`. This uses the Responses API with `typesafe/jev-router` and `cost_tier = "low"` and costs OpenRouter credit for the (tiny) classification call.
 
+## Per-message routing (the hook)
+
+`hroute install-hook` adds two Claude Code hooks (preview first; `--write` merges them and keeps a `.bak`):
+
+- `UserPromptSubmit` -> `hroute hook`: classifies every prompt and injects a one-line hint, e.g. *"this is `quick`: delegate to the `hr-quick` subagent"*, or *"Claude is over its 5h threshold: run `hsub impl "<task>"`"* (so work flows to Codex or Antigravity when Claude is nearly out). Nothing is injected when Claude is already the right place (the default tier on Claude).
+- `SessionStart` -> `hroute sync-agents`: keeps the `hr-*` subagents' models in step with live usage.
+
+Classification order: **regex rules** (instant, free) -> **Jev** if `OPENROUTER_API_KEY` is set, otherwise **Haiku** (`claude -p`, about 2 s, your subscription) -> `default_tier`. Haiku is skipped while the Claude account is parked or over threshold. Prompts shorter than `hook.min_chars`, and slash commands, skip the LLM; `[hook] mode = "rules"` makes the hook fully instant and free.
+
+This is a *hint*, not a switch: Claude decides whether to follow it. A hook cannot change the running session's model. Internal `claude -p` calls set `HROUTE_INNER=1` so the hook never recurses.
+
 ## Usage sources
 
 | Kind | Where the 5h percentage comes from |
@@ -120,6 +131,7 @@ For a second opinion or review run:  hsub plan "<task>"
 | `hroute explain <prompt>` | Show tier and chain without launching |
 | `hroute sub <tier> <task>` (or `hsub`) | Headless one-shot on the first usable target |
 | `hroute sync-agents [--dir d]` | Generate Claude Code subagents `hr-<tier>` |
+| `hroute hook` / `hroute install-hook [--write]` | Per-message routing hook and its installer |
 | `hroute status` | Accounts with live 5h usage, parked accounts, tiers |
 | `hroute usage-sink <account>` | Record statusline usage (reads JSON on stdin) |
 | `hroute mark <account\|target> [--for 5h]` | Park an account by hand |

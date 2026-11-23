@@ -34,9 +34,9 @@ describe("classification", () => {
     await expect(classify("x", cfg, "nope")).rejects.toThrow();
   });
   test("rules, then default", async () => {
-    expect((await classify("design the billing architecture", cfg)).tier).toBe("plan");
-    expect((await classify("fix typo", cfg)).tier).toBe("quick");
-    expect((await classify("add pagination", cfg)).source).toBe("default");
+    expect((await classify("design the billing architecture", cfg, undefined, { llm: false })).tier).toBe("plan");
+    expect((await classify("fix typo", cfg, undefined, { llm: false })).tier).toBe("quick");
+    expect((await classify("add pagination", cfg, undefined, { llm: false })).source).toBe("default");
   });
   test("pickTier takes the earliest known tier", () => {
     expect(pickTier("Tier: PLAN.", ["plan", "impl"])).toBe("plan");
@@ -200,5 +200,101 @@ describe("hsub and subagents", () => {
     expect(body).toContain(GENERATED_MARK);
     const allHot = () => ({ usedPercent: 99, source: "t" });
     expect(renderAgent(parseConfig('[tiers.q]\nchain=["claude:haiku"]'), "q", { exhausted: {}, usage: allHot })).not.toContain("model:");
+  });
+});
+
+import { classifyWithHaiku } from "../src/classify.ts";
+import { buildHint, claudeUsable, hook, mergeHooks } from "../src/hook.ts";
+
+const HK = parseConfig(`
+[classifier]
+mode = "auto"
+[hook]
+session_model = "sonnet"
+[[rules]]
+tier = "quick"
+match = ["typo"]
+[tiers.plan]
+chain = ["claude:claude-sonnet-5-5", "codex:gpt-6.1-sol:high"]
+[tiers.impl]
+chain = ["claude:claude-sonnet-5-5", "codex:gpt-6.1-sol:medium"]
+[tiers.quick]
+chain = ["claude:claude-haiku-5-5", "codex:gpt-6-luna:low"]
+`);
+const ctx = { exhausted: {} as Record<string, any>, usage: none };
+
+describe("classifier modes", () => {
+  const saved = process.env.OPENROUTER_API_KEY;
+  test("haiku answer is parsed; garbage falls back to default", async () => {
+    delete process.env.OPENROUTER_API_KEY;
+    const ok = async () => "Quick\n";
+    expect((await classifyWithHaiku("t", HK, ok))?.tier).toBe("quick");
+    expect(await classifyWithHaiku("t", HK, async () => "no idea")).toBeNull();
+    const c = await classify("do something long and ambiguous here", HK, undefined, { runHaikuImpl: async () => "plan" });
+    expect(c).toMatchObject({ tier: "plan", source: "haiku" });
+    expect((await classify("do something long and ambiguous here", HK, undefined, { runHaikuImpl: async () => null })).source).toBe("default");
+  });
+  test("with an OpenRouter key Jev replaces Haiku; Haiku still backs it up", async () => {
+    process.env.OPENROUTER_API_KEY = "k";
+    let haikuCalled = false;
+    const jev = (async () => new Response(JSON.stringify({ model: "m", output: [{ content: [{ text: "plan" }] }] }))) as unknown as typeof fetch;
+    const c = await classify("long ambiguous prompt for the router", HK, undefined, { fetchImpl: jev, runHaikuImpl: async () => ((haikuCalled = true), "quick") });
+    expect(c.source).toBe("jev");
+    expect(haikuCalled).toBe(false);
+    const down = (async () => new Response("x", { status: 503 })) as unknown as typeof fetch;
+    expect((await classify("long ambiguous prompt for the router", HK, undefined, { fetchImpl: down, runHaikuImpl: async () => "quick" })).source).toBe("haiku");
+    if (saved) process.env.OPENROUTER_API_KEY = saved; else delete process.env.OPENROUTER_API_KEY;
+  });
+  test("haikuAllowed=false and llm=false never call the LLM", async () => {
+    const boom = async () => { throw new Error("should not run"); };
+    expect((await classify("long ambiguous prompt for the router", HK, undefined, { haikuAllowed: false, runHaikuImpl: boom })).source).toBe("default");
+    expect((await classify("long ambiguous prompt for the router", HK, undefined, { llm: false, runHaikuImpl: boom })).source).toBe("default");
+  });
+});
+
+describe("hook", () => {
+  const input = (prompt: string) => JSON.stringify({ prompt });
+  test("light task -> subagent hint; default tier on Claude -> silence", async () => {
+    const out = JSON.parse((await hook(input("fix the typo in the readme"), HK, ctx))!);
+    expect(out.hookSpecificOutput.hookEventName).toBe("UserPromptSubmit");
+    expect(out.hookSpecificOutput.additionalContext).toContain("hr-quick");
+    expect(await hook(input("add pagination to the users endpoint please"), { ...HK, hook: { ...HK.hook, mode: "rules" } }, ctx)).toBeNull();
+  });
+  test("session model suppresses a pointless same-model subagent", () => {
+    expect(buildHint(HK, { tier: "plan", source: "rule" }, ctx)).toBeNull();
+  });
+  test("Claude over threshold -> route to hsub on another agent", () => {
+    const hot = (t: any) => (t.account === "claude" ? { usedPercent: 95, source: "t" } : null);
+    const hint = buildHint(HK, { tier: "impl", source: "rule" }, { exhausted: {}, usage: hot })!;
+    expect(hint).toContain('hsub impl');
+    expect(hint).toContain("codex:gpt-6.1-sol:medium");
+  });
+  test("everything exhausted -> says so", () => {
+    const all = () => ({ usedPercent: 99, source: "t" });
+    expect(buildHint(HK, { tier: "impl", source: "rule" }, { exhausted: {}, usage: all })).toContain("exhausted");
+  });
+  test("ignores slash commands, empty input, junk, and the inner guard", async () => {
+    expect(await hook(input("/model haiku"), HK, ctx)).toBeNull();
+    expect(await hook("not json", HK, ctx)).toBeNull();
+    expect(await hook(input(""), HK, ctx)).toBeNull();
+    process.env.HROUTE_INNER = "1";
+    expect(await hook(input("fix the typo"), HK, ctx)).toBeNull();
+    delete process.env.HROUTE_INNER;
+  });
+  test("claudeUsable reflects parking and threshold", () => {
+    expect(claudeUsable(HK, ctx)).toBe(true);
+    expect(claudeUsable(HK, { exhausted: { claude: {} as any }, usage: none })).toBe(false);
+    expect(claudeUsable(HK, { exhausted: {}, usage: () => ({ usedPercent: 91, source: "t" }) })).toBe(false);
+  });
+});
+
+describe("install-hook merge", () => {
+  test("adds both hooks, keeps existing settings, and is idempotent", () => {
+    const first = mergeHooks({ model: "sonnet", hooks: { Stop: [{ hooks: [{ type: "command", command: "x" }] }] } });
+    expect(first.changed).toBe(true);
+    expect(first.settings.model).toBe("sonnet");
+    expect(first.settings.hooks.Stop).toHaveLength(1);
+    expect(first.settings.hooks.UserPromptSubmit[0].hooks[0].command).toBe("hroute hook");
+    expect(mergeHooks(first.settings).changed).toBe(false);
   });
 });
