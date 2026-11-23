@@ -37,7 +37,7 @@ hroute run -t quick "rename foo to bar"        # explicit tier
 ## Install
 
 ```sh
-git clone https://github.com/<you>/herdr-router && cd herdr-router
+git clone https://github.com/Manulapo/herdr-router && cd herdr-router
 bun install
 bun link            # puts `hroute` on your PATH
 hroute init         # writes ~/.config/herdr-router/routing.toml
