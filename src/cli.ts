@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
@@ -27,7 +27,7 @@ Usage:
   hroute usage-sink <account>      Read statusline JSON on stdin, record the 5h usage for <account>
   hroute mark <account|target> [--for 5h]  Park an account manually, e.g. claude-work
   hroute reset [account|target]    Un-park one, or all
-  hroute init                      Copy routing.example.toml to ~/.config/herdr-router/
+  hroute init                      Copy routing.example.toml and .env.example to ~/.config/herdr-router/
   hroute doctor                    Check herdr, config and optional Jev key
 
 Config: $HROUTE_CONFIG, ./routing.toml, ~/.config/herdr-router/routing.toml
@@ -198,6 +198,12 @@ export async function main(argv: string[]): Promise<number> {
       mkdirSync(dirname(dest), { recursive: true });
       copyFileSync(new URL("../routing.example.toml", import.meta.url), dest);
       console.log(`wrote ${dest} - edit the models to match your subscriptions`);
+      const envDest = envFilePath();
+      if (!existsSync(envDest)) {
+        copyFileSync(new URL("../.env.example", import.meta.url), envDest);
+        chmodSync(envDest, 0o600);
+        console.log(`wrote ${envDest} (chmod 600) - add OPENROUTER_API_KEY to enable Jev`);
+      }
       return 0;
     }
 

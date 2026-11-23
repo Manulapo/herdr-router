@@ -71,10 +71,11 @@ mode = "jev"
 Put the key in a private env file (works no matter how Herdr or Claude was launched):
 
 ```sh
-mkdir -p ~/.config/herdr-router
-echo 'OPENROUTER_API_KEY=sk-or-...' > ~/.config/herdr-router/.env
-chmod 600 ~/.config/herdr-router/.env
+hroute init            # creates routing.toml and a chmod-600 .env from .env.example
+$EDITOR ~/.config/herdr-router/.env     # set OPENROUTER_API_KEY=sk-or-...
 ```
+
+Or by hand: copy [`.env.example`](.env.example) to `~/.config/herdr-router/.env` and `chmod 600` it.
 
 A real environment variable takes precedence over the file. Only that file (or `$HROUTE_ENV`) is read, never a project-local `.env`. `hroute doctor` warns if it is readable by others.
 
