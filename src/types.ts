@@ -57,6 +57,13 @@ export interface Config {
     /** Skip the subagent hint when the target model name contains this (session already runs it). */
     sessionModel: string;
   };
+  handoff: {
+    enabled: boolean;
+    maxChars: number;
+    maxAgeMs: number;
+    /** Minimum time between Haiku rewrites triggered by the Stop hook. */
+    minIntervalMs: number;
+  };
   rules: Rule[];
   accounts: Record<string, Account>;
   tiers: Record<string, Tier>;

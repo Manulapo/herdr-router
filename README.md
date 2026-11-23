@@ -92,6 +92,16 @@ Classification order: **regex rules** (instant, free) -> **Jev** if `OPENROUTER_
 
 This is a *hint*, not a switch: Claude decides whether to follow it. A hook cannot change the running session's model. Internal `claude -p` calls set `HROUTE_INNER=1` so the hook never recurses.
 
+## Handoff: context for the next agent
+
+Routed agents start with no memory. To avoid that, `hroute` keeps a small note per working directory (`Goal / Done / Next / Decisions`, capped at `max_chars`, rewritten rather than appended so it never grows).
+
+- **Written** by the `Stop` hook: it returns immediately and spawns a detached process in which Haiku rewrites the note from the previous note plus the tail of the Claude transcript. It is throttled to once per `min_interval`, and nothing you do waits on it.
+- **Read** by `hroute run` and `hsub`: the note is prepended to the prompt, together with *live* git facts (branch, changed files, diff stat) that need no LLM. Notes older than `max_age` are ignored; `--no-handoff` skips it.
+- `hroute handoff show | clear | update --transcript <file>` to inspect, reset or refresh it by hand.
+
+The note is a summary, so the receiving agent is told to verify it against the repo. It only follows Claude sessions that ran the `Stop` hook; for other agents write it by hand or from a transcript.
+
 ## Usage sources
 
 | Kind | Where the 5h percentage comes from |

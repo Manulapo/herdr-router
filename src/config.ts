@@ -122,6 +122,12 @@ export function parseConfig(toml: string): Config {
       mode: hookMode,
       sessionModel: String(raw.hook?.session_model ?? ""),
     },
+    handoff: {
+      enabled: raw.handoff?.enabled ?? true,
+      maxChars: Number(raw.handoff?.max_chars ?? 2000),
+      maxAgeMs: parseDuration(raw.handoff?.max_age ?? "24h"),
+      minIntervalMs: parseDuration(raw.handoff?.min_interval ?? "2m"),
+    },
     rules,
     accounts,
     tiers,

@@ -50,6 +50,7 @@ export async function hook(stdin: string, config: Config, ctx: PlanContext): Pro
 
 const HOOK_CMD = "hroute hook";
 const SYNC_CMD = "hroute sync-agents >/dev/null 2>&1";
+const HANDOFF_CMD = "hroute handoff update --hook";
 
 /** Merge hroute's hooks into a settings object without touching anything else. Idempotent. */
 export function mergeHooks(settings: any): { settings: any; changed: boolean } {
@@ -64,5 +65,6 @@ export function mergeHooks(settings: any): { settings: any; changed: boolean } {
   };
   add("UserPromptSubmit", HOOK_CMD, 20);
   add("SessionStart", SYNC_CMD);
+  add("Stop", HANDOFF_CMD);
   return { settings: out, changed };
 }

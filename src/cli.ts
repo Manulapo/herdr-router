@@ -8,6 +8,7 @@ import { formatRemaining, parseDuration } from "./duration.ts";
 import { envFilePath, isTooOpen, loadEnvFile } from "./env.ts";
 import { insideHerdr } from "./herdr.ts";
 import { syncAgents } from "./agents.ts";
+import { clearHandoff, extractTranscriptText, gitFacts, handoffPath, loadHandoff, renderHandoff, updateHandoff, withHandoff } from "./handoff.ts";
 import { claudeUsable, hook, mergeHooks } from "./hook.ts";
 import { run } from "./run.ts";
 import { runSub } from "./sub.ts";
@@ -23,6 +24,7 @@ Usage:
   hroute sync-agents [--dir <d>]   Write Claude Code subagents hr-<tier>.md (model follows live usage)
   hroute hook                      UserPromptSubmit hook: classify the prompt, hint Claude where to route it
   hroute install-hook [--write]    Show (or merge, with a backup) the hooks into Claude Code's settings.json
+  hroute handoff show|clear|update [--cwd d]   The note passed to the next agent (rewritten by Haiku in the background)
   hroute status                    Tiers, chains, 5h usage and parked accounts
   hroute usage-sink <account>      Read statusline JSON on stdin, record the 5h usage for <account>
   hroute mark <account|target> [--for 5h]  Park an account manually, e.g. claude-work
@@ -55,6 +57,10 @@ export async function main(argv: string[]): Promise<number> {
       json: { type: "boolean", default: false },
       dir: { type: "string" },
       write: { type: "boolean", default: false },
+      hook: { type: "boolean", default: false },
+      transcript: { type: "string" },
+      force: { type: "boolean", default: false },
+      "no-handoff": { type: "boolean", default: false },
       timeout: { type: "string", default: "10m" },
     },
   });
@@ -74,7 +80,7 @@ export async function main(argv: string[]): Promise<number> {
       if (values.direction !== "right" && values.direction !== "down") throw new Error("--direction must be right|down");
       const result = await run(config, {
         tier: c.tier,
-        prompt,
+        prompt: values["no-handoff"] || dryRun ? prompt : withHandoff(prompt, values.cwd ?? process.cwd(), config),
         cwd: values.cwd ?? process.cwd(),
         direction: values.direction,
         wait: values.wait,
@@ -116,6 +122,46 @@ export async function main(argv: string[]): Promise<number> {
       return 0;
     }
 
+    case "handoff": {
+      const [action = "show"] = positionals;
+      const cwd = values.cwd ?? process.cwd();
+      const { config } = loadConfig();
+      if (action === "show") {
+        const h = loadHandoff(cwd);
+        console.log(h ? `${renderHandoff(h, config.handoff.maxChars)}\n## Working tree (live)\n${gitFacts(cwd) || "(not a git repo)"}\n\n${handoffPath(cwd)}` : `no handoff for ${cwd}`);
+        return 0;
+      }
+      if (action === "clear") {
+        console.log(clearHandoff(cwd) ? `cleared handoff for ${cwd}` : `no handoff for ${cwd}`);
+        return 0;
+      }
+      if (action === "update") {
+        if (values.hook) {
+          // Stop hook: read stdin fast, hand the slow Haiku work to a detached child, return at once.
+          if (process.env.HROUTE_INNER || !config.handoff.enabled) return 0;
+          let input: any = {};
+          try {
+            input = JSON.parse(await Bun.stdin.text());
+          } catch {
+            return 0;
+          }
+          if (!input.transcript_path) return 0;
+          const child = Bun.spawn(
+            [process.execPath, process.argv[1]!, "handoff", "update", "--transcript", String(input.transcript_path), "--cwd", String(input.cwd ?? cwd)],
+            { stdio: ["ignore", "ignore", "ignore"], env: { ...process.env, HROUTE_INNER: "1" } },
+          );
+          child.unref();
+          return 0;
+        }
+        if (!values.transcript) throw new Error("Usage: hroute handoff update --transcript <file.jsonl> [--cwd d] [--force]");
+        const convo = extractTranscriptText(readFileSync(values.transcript, "utf8"), 12_000);
+        const result = await updateHandoff({ cwd, convo, config, force: values.force });
+        console.log(result);
+        return result === "updated" || result === "throttled" || result === "no-conversation" ? 0 : 1;
+      }
+      throw new Error("Usage: hroute handoff show|clear|update");
+    }
+
     case "hook": {
       const { config } = loadConfig();
       const ctx = { exhausted: loadState().exhausted, usage: (t: any) => getUsage(t) };
@@ -153,7 +199,8 @@ export async function main(argv: string[]): Promise<number> {
       if (!tier || !task) throw new Error("Usage: hroute sub <tier> <task>");
       const { config } = loadConfig();
       if (!config.tiers[tier]) throw new Error(`Unknown tier "${tier}". Defined: ${Object.keys(config.tiers).join(", ")}`);
-      const r = await runSub(config, tier, task, { cwd: values.cwd ?? process.cwd(), timeoutMs: parseDuration(values.timeout) });
+      const fullTask = values["no-handoff"] ? task : withHandoff(task, values.cwd ?? process.cwd(), config);
+      const r = await runSub(config, tier, fullTask, { cwd: values.cwd ?? process.cwd(), timeoutMs: parseDuration(values.timeout) });
       for (const a of r.attempts) if (a.outcome !== "started") console.error(`hsub: ${a.outcome} ${a.target}${a.detail ? ` - ${a.detail}` : ""}`);
       if (!r.chosen) {
         console.error("hsub: no target available");

@@ -246,9 +246,12 @@ describe("classifier modes", () => {
     if (saved) process.env.OPENROUTER_API_KEY = saved; else delete process.env.OPENROUTER_API_KEY;
   });
   test("haikuAllowed=false and llm=false never call the LLM", async () => {
+    const savedKey = process.env.OPENROUTER_API_KEY;
+    delete process.env.OPENROUTER_API_KEY; // a real key in the shell must not leak into this test
     const boom = async () => { throw new Error("should not run"); };
     expect((await classify("long ambiguous prompt for the router", HK, undefined, { haikuAllowed: false, runHaikuImpl: boom })).source).toBe("default");
     expect((await classify("long ambiguous prompt for the router", HK, undefined, { llm: false, runHaikuImpl: boom })).source).toBe("default");
+    if (savedKey) process.env.OPENROUTER_API_KEY = savedKey;
   });
 });
 
@@ -293,7 +296,7 @@ describe("install-hook merge", () => {
     const first = mergeHooks({ model: "sonnet", hooks: { Stop: [{ hooks: [{ type: "command", command: "x" }] }] } });
     expect(first.changed).toBe(true);
     expect(first.settings.model).toBe("sonnet");
-    expect(first.settings.hooks.Stop).toHaveLength(1);
+    expect(first.settings.hooks.Stop).toHaveLength(2); // existing + hroute handoff
     expect(first.settings.hooks.UserPromptSubmit[0].hooks[0].command).toBe("hroute hook");
     expect(mergeHooks(first.settings).changed).toBe(false);
   });
@@ -338,5 +341,74 @@ describe("env file", () => {
     expect(target.OPENROUTER_API_KEY).toBe("from-shell");
     expect(target.OTHER).toBe("1");
     expect(loadEnvFile(join(tmpdir(), "nope.env"), {})).toBeNull();
+  });
+});
+
+import { clearHandoff, extractTranscriptText, handoffPath, loadHandoff, parseSections, renderHandoff, saveHandoff, summarizerPrompt, updateHandoff, withHandoff } from "../src/handoff.ts";
+
+describe("handoff", () => {
+  const cfg = parseConfig('[handoff]\nmax_chars = 400\nmin_interval = "2m"\n[tiers.a]\nchain=["claude"]');
+  const dir = mk(join(tmpdir(), "hroute-h-"));
+  const note = { goal: "Add pagination to /users", done: ["handler in api/users.ts"], next: ["write tests"], decisions: ["cursor based"], updatedAt: new Date().toISOString(), cwd: "/proj" };
+
+  test("round-trips and keeps one note per directory", () => {
+    saveHandoff(note, 400, dir);
+    expect(loadHandoff("/proj", dir)).toEqual(note);
+    expect(loadHandoff("/other", dir)).toBeNull();
+    expect(handoffPath("/proj", dir)).not.toBe(handoffPath("/other", dir));
+    expect(clearHandoff("/proj", dir)).toBe(true);
+  });
+  test("stays under the cap, dropping old items but keeping Next", () => {
+    const big = { ...note, done: Array.from({ length: 30 }, (_, i) => `finished step number ${i} in some file`), next: ["keep me"] };
+    const out = renderHandoff(big, 400);
+    expect(out.length).toBeLessThanOrEqual(400);
+    expect(out).toContain("keep me");
+    expect(out).toContain("step number 29"); // newest survives
+    expect(out).not.toContain("step number 0 ");
+  });
+  test("parses model replies and rejects replies without a Goal", () => {
+    expect(parseSections("## Goal\nShip it\n## Done\n- a\n- b\n## Next\n- c\n## Decisions\n- d")).toEqual({ goal: "Ship it", done: ["a", "b"], next: ["c"], decisions: ["d"] });
+    expect(parseSections("sorry I cannot")).toBeNull();
+  });
+  test("transcript extraction keeps prose and tool names, drops tool results, keeps the newest text", () => {
+    const j = [
+      { type: "user", message: { role: "user", content: "add pagination" } },
+      { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "On it" }, { type: "tool_use", name: "Edit", input: { file_path: "api/users.ts" } }] } },
+      { type: "user", message: { role: "user", content: [{ type: "tool_result", content: "HUGE OUTPUT" }] } },
+    ].map((x) => JSON.stringify(x)).join("\n") + "\nnot json";
+    const t = extractTranscriptText(j, 10_000);
+    expect(t).toContain("User: add pagination");
+    expect(t).toContain("[Edit api/users.ts]");
+    expect(t).not.toContain("HUGE OUTPUT");
+    expect(extractTranscriptText(j, 20).length).toBeLessThanOrEqual(20);
+  });
+  test("update: rewrites via the model, throttles, and survives bad replies", async () => {
+    const d = mk(join(tmpdir(), "hroute-h2-"));
+    const good = async () => "## Goal\nShip pagination\n## Done\n- x\n## Next\n- y\n## Decisions\n- z";
+    const now = new Date();
+    expect(await updateHandoff({ cwd: "/p", convo: "User: hi", config: cfg, dir: d, run: good, now })).toBe("updated");
+    expect(await updateHandoff({ cwd: "/p", convo: "User: hi", config: cfg, dir: d, run: good, now: new Date(now.getTime() + 30_000) })).toBe("throttled");
+    expect(await updateHandoff({ cwd: "/p", convo: "User: hi", config: cfg, dir: d, run: async () => "garbage", now: new Date(now.getTime() + 3e5) })).toBe("bad-reply");
+    expect(await updateHandoff({ cwd: "/p", convo: "User: hi", config: cfg, dir: d, run: async () => null, now: new Date(now.getTime() + 3e5) })).toBe("failed");
+    expect(await updateHandoff({ cwd: "/p", convo: "  ", config: cfg, dir: d, run: good, now })).toBe("no-conversation");
+    expect(loadHandoff("/p", d)?.goal).toBe("Ship pagination");
+  });
+  test("summarizer prompt carries the previous note and the cap", () => {
+    expect(summarizerPrompt(note, "User: hi", 400)).toContain("Add pagination to /users");
+    expect(summarizerPrompt(null, "User: hi", 400)).toContain("400 characters");
+  });
+  test("withHandoff prepends fresh notes only, and respects enabled=false", () => {
+    const d = mk(join(tmpdir(), "hroute-h3-"));
+    saveHandoff({ ...note, cwd: "/nogit-xyz" }, 400, d);
+    const out = withHandoff("do the thing", "/nogit-xyz", cfg, d);
+    expect(out).toContain("Add pagination to /users");
+    expect(out.endsWith("do the thing")).toBe(true);
+    expect(withHandoff("do the thing", "/nogit-xyz", cfg, d, new Date(Date.now() + 25 * 36e5))).toBe("do the thing");
+    expect(withHandoff("x", "/none", cfg, d)).toBe("x");
+    const off = parseConfig('[handoff]\nenabled = false\n[tiers.a]\nchain=["claude"]');
+    expect(withHandoff("x", "/nogit-xyz", off, d)).toBe("x");
+  });
+  test("install-hook also registers the Stop hook", () => {
+    expect(mergeHooks({}).settings.hooks.Stop[0].hooks[0].command).toBe("hroute handoff update --hook");
   });
 });

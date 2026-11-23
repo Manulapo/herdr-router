@@ -42,6 +42,17 @@ match = ["\\b(architect|design|plan|rfc|trade-?off|root cause|review)\\b"]
 tier = "quick"
 match = ["\\b(grep|find|list|rename|typo|summari[sz]e|explain|format|lint)\\b"]
 
+# ---- Handoff ---------------------------------------------------------------
+# A small note per working directory (goal / done / next / decisions) that is
+# prepended to prompts sent by `hroute run` and `hsub`, so the next agent does
+# not start blind. The Stop hook has Haiku rewrite it in a detached background
+# process (never blocks you) at most once per min_interval.
+[handoff]
+enabled = true
+max_chars = 2000
+max_age = "24h"                # older notes are ignored
+min_interval = "2m"
+
 # ---- Accounts --------------------------------------------------------------
 # Optional. Each account is one subscription login. Without this section every
 # kind ("claude", "codex") is a single implicit account.
