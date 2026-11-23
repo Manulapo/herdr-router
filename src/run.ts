@@ -1,6 +1,8 @@
 import { detectLimit, parseResetTime } from "./limits.ts";
 import { closePane, HerdrError, readAgent, readPane, sendPrompt, splitPane, startAgent, waitAgent } from "./herdr.ts";
+import { planCandidates } from "./plan.ts";
 import { loadState, markExhausted } from "./state.ts";
+import { getUsage } from "./usage.ts";
 import type { Config, Target } from "./types.ts";
 
 export interface RunOptions {
@@ -14,12 +16,15 @@ export interface RunOptions {
 
 export interface Attempt {
   target: string;
-  outcome: "skipped-exhausted" | "limit" | "failed" | "started";
+  outcome: "skipped" | "limit" | "failed" | "started";
   detail?: string;
 }
 
 export interface RunResult {
+  /** Tier that was requested. */
   tier: string;
+  /** Tier whose chain actually supplied the target (after fallback_tier hops). */
+  usedTier: string | null;
   chosen: string | null;
   pane?: string;
   agent?: string;
@@ -40,33 +45,32 @@ export function stripPrompt(text: string, prompt: string): string {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-function recordLimit(target: Target, text: string, config: Config, attempts: Attempt[], prompt = ""): boolean {
+/** A limit hit exhausts the whole account: its 5h window is shared by every model. */
+export function recordLimit(target: Target, text: string, config: Config, attempts: Attempt[], prompt = ""): boolean {
   text = prompt ? stripPrompt(text, prompt) : text;
   const hit = detectLimit(text, config.limitPatterns);
   if (!hit) return false;
   const until = parseResetTime(text) ?? new Date(Date.now() + config.defaultCooldownMs);
-  markExhausted(target.id, until, hit);
+  markExhausted(target.account, until, hit);
   attempts.push({ target: target.id, outcome: "limit", detail: `${hit} (until ${until.toISOString()})` });
   return true;
 }
 
 export async function run(config: Config, opts: RunOptions): Promise<RunResult> {
-  const chain = config.tiers[opts.tier]!;
-  const exhausted = loadState().exhausted;
+  const candidates = planCandidates(config, opts.tier, { exhausted: loadState().exhausted, usage: (t) => getUsage(t) });
   const attempts: Attempt[] = [];
 
-  for (const target of chain) {
-    const parked = exhausted[target.id];
-    if (parked) {
-      attempts.push({ target: target.id, outcome: "skipped-exhausted", detail: `until ${parked.until}` });
+  for (const { tier, target, skip } of candidates) {
+    if (skip) {
+      attempts.push({ target: target.id, outcome: "skipped", detail: skip });
       continue;
     }
-    if (opts.dryRun) return { tier: opts.tier, chosen: target.id, attempts };
+    if (opts.dryRun) return { tier: opts.tier, usedTier: tier, chosen: target.id, attempts };
 
-    const name = `hr-${opts.tier}-${Date.now().toString(36)}`.slice(0, 32).toLowerCase();
+    const name = `hr-${tier}-${Date.now().toString(36)}`.slice(0, 32).toLowerCase();
     let pane: string | undefined;
     try {
-      pane = splitPane(opts.cwd, opts.direction);
+      pane = splitPane(opts.cwd, opts.direction, target.env);
       startAgent(name, target.kind, pane, target.args);
       if (recordLimit(target, readAgent(name), config, attempts)) {
         closePane(pane);
@@ -96,7 +100,7 @@ export async function run(config: Config, opts: RunOptions): Promise<RunResult> 
 
       attempts.push({ target: target.id, outcome: "started" });
       if (opts.wait) waitAgent(name);
-      return { tier: opts.tier, chosen: target.id, pane, agent: name, attempts };
+      return { tier: opts.tier, usedTier: tier, chosen: target.id, pane, agent: name, attempts };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       const text = pane ? readPane(pane) : "";
@@ -106,5 +110,5 @@ export async function run(config: Config, opts: RunOptions): Promise<RunResult> 
       if (pane) closePane(pane);
     }
   }
-  return { tier: opts.tier, chosen: null, attempts };
+  return { tier: opts.tier, usedTier: null, chosen: null, attempts };
 }

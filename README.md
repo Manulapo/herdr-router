@@ -12,10 +12,18 @@ hroute run "add pagination to /users"          # impl  -> claude:sonnet, else co
 hroute run -t quick "rename foo to bar"        # explicit tier
 ```
 
+## What it can do
+
+- **Several subscriptions.** Define accounts (two Claude logins, two Codex logins) and chain them.
+- **Switch at a usage threshold.** A target is skipped once its 5h window is e.g. 90% used, using the *real* percentage (see [Usage sources](#usage-sources)), and the chain falls through to the next account or model.
+- **Step down to something simpler.** `fallback_tier = "quick"` means: when nothing in `plan` is usable, take the `impl`/`quick` chain instead.
+- **Task-aware.** Regex rules (or optional Jev) pick the tier.
+- **Three ways in.** `hroute run` (a new Herdr pane), `hsub` (headless one-shot, usable as a fake subagent, works across accounts and Codex), and generated Claude Code subagents.
+
 ## Why this design
 
 - **Rules, not an LLM, decide by default.** Free, instant, predictable. An optional [Jev](https://openrouter.ai/docs/guides/routing/routers/jev-router) classifier (OpenRouter) handles only the prompts no rule matched.
-- **Limits are handled reactively.** Claude Code and Codex don't expose remaining quota reliably, so nothing tries to predict it. When an agent prints a limit message, the target is *parked* until the parsed reset time and the next one in the chain takes over.
+- **Limits are read, not guessed.** The 5h percentage comes from what the agents already expose (Codex logs, Claude's statusline data). If an agent still prints a limit message, the account is *parked* until the parsed reset time and the next one in the chain takes over.
 - **Subscriptions stay in use.** Agents run through their own CLIs and logins inside Herdr panes, not through a pay-per-token API.
 - **No daemon, no plugin framework.** A CLI over `herdr pane` / `herdr agent`.
 
@@ -65,30 +73,72 @@ export OPENROUTER_API_KEY=...
 
 Rules run first; Jev is asked only when none match, with a 10 s timeout, and any failure falls back to `default_tier`. This uses the Responses API with `typesafe/jev-router` and `cost_tier = "low"` and costs OpenRouter credit for the (tiny) classification call.
 
+## Usage sources
+
+| Kind | Where the 5h percentage comes from |
+|---|---|
+| `codex` | Read from the newest session log in `$CODEX_HOME/sessions` (`rate_limits.primary.used_percent`). Nothing to set up. |
+| `claude` | Claude Code hands `rate_limits.five_hour.used_percentage` to the statusline. Add one line to your statusline command so it is recorded per account: |
+
+```sh
+# inside your statusLine command, after `input=$(cat)`:
+echo "$input" | hroute usage-sink claude-work >/dev/null 2>&1 &
+```
+
+Use the account name from your config (`claude` for the implicit default account). Each Claude account has its own `CLAUDE_CONFIG_DIR` and its own `settings.json`, so add the line with the matching name in each. Usage is only fresh while a session of that account is open; an unknown usage is treated as "available". A window whose reset time has passed counts as 0%.
+
+## Subagents and `hsub`
+
+Claude Code subagents (route by task, inside a session):
+
+```sh
+hroute sync-agents          # writes ~/.claude/agents/hr-plan.md, hr-impl.md, hr-quick.md
+```
+
+Each file's `model:` is the first Claude target usable *right now*, so re-run it when usage shifts (a `SessionStart` hook works well). Files you wrote yourself are never overwritten; generated ones carry a marker. Subagents always run under the session's own login, so their model can follow usage but not switch accounts.
+
+`hsub` (cross-account, cross-agent):
+
+```sh
+hsub quick "find where parseConfig is defined"
+```
+
+Add to your `CLAUDE.md` so Claude uses it:
+
+```md
+For lookups or mechanical edits run: hsub quick "<task>"
+For a second opinion or review run:  hsub plan "<task>"
+```
+
+`hsub` runs `claude -p` or `codex exec` on the first usable target, falls through on limit messages, parks exhausted accounts, and prints the answer on stdout (routing notes go to stderr). Gemini and other kinds work with `hroute run` but not `hsub` yet.
+
 ## Commands
 
 | Command | What it does |
 |---|---|
 | `hroute run [-t tier] [--wait] [--direction right\|down] <prompt>` | Classify, launch, fall back |
 | `hroute explain <prompt>` | Show tier and chain without launching |
-| `hroute status` | Tiers, chains, parked targets |
-| `hroute mark <target> [--for 5h]` | Park a target by hand |
-| `hroute reset [target]` | Un-park one or all |
+| `hroute sub <tier> <task>` (or `hsub`) | Headless one-shot on the first usable target |
+| `hroute sync-agents [--dir d]` | Generate Claude Code subagents `hr-<tier>` |
+| `hroute status` | Accounts with live 5h usage, parked accounts, tiers |
+| `hroute usage-sink <account>` | Record statusline usage (reads JSON on stdin) |
+| `hroute mark <account\|target> [--for 5h]` | Park an account by hand |
+| `hroute reset [account\|target]` | Un-park one or all |
 | `hroute init` / `hroute doctor` | Setup and diagnostics |
 
 ## How fallback works
 
-1. Skip targets currently parked in `~/.local/state/herdr-router/state.json`.
+1. Skip targets whose account is parked in `~/.local/state/herdr-router/state.json` or whose 5h usage is at/over `max_used`. After the tier is exhausted, continue into `fallback_tier`.
 2. Split a pane (focus stays where it is), `herdr agent start`, send the prompt.
-3. Watch the agent for `probe_seconds`. If a limit message shows up (the echo of your own prompt is ignored), park the target until the parsed reset time (`resets 3pm`, `in 2 hours 10 minutes`) or `default_cooldown`, close the pane, try the next target.
+3. Watch the agent for `probe_seconds`. If a limit message shows up (the echo of your own prompt is ignored), park the whole account until the parsed reset time (`resets 3pm`, `in 2 hours 10 minutes`) or `default_cooldown`, close the pane, try the next target.
 4. Otherwise leave the agent working in its pane and return. `--wait` blocks until it settles.
 
 Exit code `2` means every target in the tier is parked or failed.
 
 ## Limitations
 
-- Limit detection reads terminal text, so it depends on the agents' wording. Add patterns in `limit_patterns` if a message slips through, and use `hroute mark` as a manual override.
-- A limit hit later in a long task (after the probe window) is not caught automatically. Run `hroute mark <target>` and re-run.
+- Limit detection reads terminal text, so it depends on the agents' wording. Add patterns in `limit_patterns` if a message slips through, and use `hroute mark` as a manual override. Claude usage is only known while a session of that account runs with the statusline hook.
+- A limit hit later in a long task (after the probe window) is not caught automatically. Run `hroute mark <account>` and re-run.
 - Tested with unit tests for config, classification, limit parsing and state. The live Herdr launch path needs a Herdr session, so check it with your own agents first (`hroute doctor`, then a throwaway prompt).
 
 ## Development

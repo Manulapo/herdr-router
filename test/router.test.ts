@@ -103,3 +103,101 @@ describe("prompt echo", () => {
     expect(detectLimit(stripPrompt("5-hour limit reached", prompt), DEFAULT_LIMIT_PATTERNS)).not.toBeNull();
   });
 });
+
+import { mkdtempSync as mk } from "node:fs";
+import { planCandidates } from "../src/plan.ts";
+import { headlessCommand } from "../src/sub.ts";
+import { renderAgent, GENERATED_MARK } from "../src/agents.ts";
+import { normalizeUsage, parseCodexRateLimits, readClaudeUsage, writeClaudeUsage } from "../src/usage.ts";
+
+const MULTI = `
+default_max_used = 90
+[accounts.claude-work]
+kind = "claude"
+env = { CLAUDE_CONFIG_DIR = "~/.claude-work" }
+max_used = 80
+[tiers.plan]
+chain = ["claude:opus", "claude-work:opus", "codex:gpt-5.5"]
+fallback_tier = "quick"
+[tiers.quick]
+chain = ["claude:haiku"]
+`;
+const none = () => null;
+
+describe("accounts", () => {
+  const cfg = parseConfig(MULTI);
+  test("account targets carry env, kind and threshold", () => {
+    const t = cfg.tiers.plan!.chain[1]!;
+    expect(t.kind).toBe("claude");
+    expect(t.account).toBe("claude-work");
+    expect(t.env.CLAUDE_CONFIG_DIR.endsWith("/.claude-work")).toBe(true);
+    expect(t.maxUsed).toBe(80);
+    expect(cfg.tiers.plan!.chain[0]!.account).toBe("claude");
+  });
+  test("unknown fallback tier is rejected", () => {
+    expect(() => parseConfig('[tiers.a]\nchain=["claude"]\nfallback_tier="zz"')).toThrow();
+  });
+});
+
+describe("planning", () => {
+  const cfg = parseConfig(MULTI);
+  const ids = (c: ReturnType<typeof planCandidates>) => c.filter((x) => !x.skip).map((x) => x.target.id);
+  test("everything usable: chain then fallback tier, in order", () => {
+    expect(ids(planCandidates(cfg, "plan", { exhausted: {}, usage: none }))).toEqual(["claude:opus", "claude-work:opus", "codex:gpt-5.5", "claude:haiku"]);
+  });
+  test("over threshold skips only that account (per-account max_used)", () => {
+    const usage = (t: any) => (t.account === "claude" ? { usedPercent: 91, source: "t" } : t.account === "claude-work" ? { usedPercent: 85, source: "t" } : null);
+    const c = planCandidates(cfg, "plan", { exhausted: {}, usage });
+    expect(c.find((x) => x.target.id === "claude:opus")!.skip).toContain("91%");
+    expect(c.find((x) => x.target.id === "claude-work:opus")!.skip).toContain("80%");
+    expect(ids(c)).toEqual(["codex:gpt-5.5"]);
+  });
+  test("parked account blocks all its models and tiers", () => {
+    const exhausted = { claude: { until: "x", reason: "r", at: "x" } };
+    expect(ids(planCandidates(cfg, "plan", { exhausted, usage: none }))).toEqual(["claude-work:opus", "codex:gpt-5.5"]);
+  });
+  test("fallback_tier cycles do not loop", () => {
+    const c = parseConfig('[tiers.a]\nchain=["claude"]\nfallback_tier="b"\n[tiers.b]\nchain=["codex"]\nfallback_tier="a"');
+    expect(planCandidates(c, "a", { exhausted: {}, usage: none })).toHaveLength(2);
+  });
+});
+
+describe("usage sources", () => {
+  const line = '{"rate_limits":{"limit_id":"codex","limit_name":null,"primary":{"used_percent":42.5,"window_minutes":300,"resets_at":1795386955},"secondary":{"used_percent":0.0,"window_minutes":10080,"resets_at":1795973755}}}';
+  test("codex log: takes the last primary window", () => {
+    expect(parseCodexRateLimits(`${line}\n${line.replace("42.5", "77.0")}`)).toEqual({ used: 77, resets: 1795386955 });
+    expect(parseCodexRateLimits("nothing")).toBeNull();
+  });
+  test("a window that already reset reads 0%", () => {
+    const now = new Date(1795390000 * 1000);
+    expect(normalizeUsage(99, 1795386955, now, "x").usedPercent).toBe(0);
+    expect(normalizeUsage(99, 1795390500, now, "x").usedPercent).toBe(99);
+  });
+  test("claude statusline sink round-trips and ignores payloads without rate_limits", () => {
+    const dir = mk(join(tmpdir(), "hroute-u-"));
+    const now = new Date(1795380000 * 1000);
+    expect(writeClaudeUsage("a", JSON.stringify({ rate_limits: { five_hour: { used_percentage: 63, resets_at: 1795386955 } } }), now, dir)).toBe(true);
+    expect(readClaudeUsage("a", now, dir)?.usedPercent).toBe(63);
+    expect(writeClaudeUsage("b", '{"model":{}}', now, dir)).toBe(false);
+    expect(readClaudeUsage("b", now, dir)).toBeNull();
+  });
+});
+
+describe("hsub and subagents", () => {
+  const cfg = parseConfig(MULTI);
+  test("headless commands per kind", () => {
+    const [opus, , codex] = cfg.tiers.plan!.chain;
+    expect(headlessCommand(opus!, "t")).toEqual(["claude", "-p", "--model", "opus", "t"]);
+    expect(headlessCommand(codex!, "t")).toEqual(["codex", "exec", "-m", "gpt-5.5", "t"]);
+    expect(headlessCommand({ ...opus!, kind: "gemini" }, "t")).toBeNull();
+  });
+  test("subagent model follows live usage", () => {
+    const hot = (t: any) => (t.account === "claude" ? { usedPercent: 95, source: "t" } : null);
+    expect(renderAgent(cfg, "plan", { exhausted: {}, usage: none })).toContain("model: opus");
+    const body = renderAgent(cfg, "plan", { exhausted: {}, usage: hot });
+    expect(body).toContain("model: opus"); // claude-work:opus still has room
+    expect(body).toContain(GENERATED_MARK);
+    const allHot = () => ({ usedPercent: 99, source: "t" });
+    expect(renderAgent(parseConfig('[tiers.q]\nchain=["claude:haiku"]'), "q", { exhausted: {}, usage: allHot })).not.toContain("model:");
+  });
+});

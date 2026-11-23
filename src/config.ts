@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseDuration } from "./duration.ts";
 import { DEFAULT_LIMIT_PATTERNS } from "./limits.ts";
-import type { Config, Target } from "./types.ts";
+import type { Account, Config, Target } from "./types.ts";
 
 export function configCandidates(): string[] {
   return [
@@ -29,20 +29,35 @@ export function buildArgs(kind: string, model?: string, effort?: string): string
   return args;
 }
 
-export function parseTarget(spec: unknown): Target {
+const expandHome = (v: string) => (v.startsWith("~/") ? join(homedir(), v.slice(2)) : v);
+
+function parseEnv(raw: unknown): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries((raw ?? {}) as Record<string, unknown>)) env[k] = expandHome(String(v));
+  return env;
+}
+
+export function parseTarget(spec: unknown, accounts: Record<string, Account> = {}): Target {
   if (typeof spec === "string") {
-    const [kind, model, effort] = spec.split(":");
-    if (!kind) throw new Error(`Invalid target "${spec}" (expected kind[:model[:effort]])`);
-    return { id: spec, kind, model, effort, args: buildArgs(kind, model, effort) };
+    const [head, model, effort] = spec.split(":");
+    if (!head) throw new Error(`Invalid target "${spec}" (expected account|kind[:model[:effort]])`);
+    const acc = accounts[head];
+    const kind = acc?.kind ?? head;
+    return { id: spec, kind, account: head, model, effort, args: buildArgs(kind, model, effort), env: acc?.env ?? {}, maxUsed: acc?.maxUsed };
   }
   if (spec && typeof spec === "object") {
     const t = spec as Record<string, unknown>;
-    if (typeof t.kind !== "string") throw new Error("Target table needs a string `kind`");
+    const acc = typeof t.account === "string" ? accounts[t.account] : undefined;
+    if (typeof t.account === "string" && !acc) throw new Error(`Unknown account "${t.account}"`);
+    const kind = (typeof t.kind === "string" ? t.kind : acc?.kind) as string | undefined;
+    if (!kind) throw new Error("Target table needs `kind` or `account`");
     const model = typeof t.model === "string" ? t.model : undefined;
     const effort = typeof t.effort === "string" ? t.effort : undefined;
-    const args = Array.isArray(t.args) ? t.args.map(String) : buildArgs(t.kind, model, effort);
-    const id = typeof t.id === "string" ? t.id : [t.kind, model, effort].filter(Boolean).join(":");
-    return { id, kind: t.kind, model, effort, args };
+    const account = typeof t.account === "string" ? t.account : kind;
+    const args = Array.isArray(t.args) ? t.args.map(String) : buildArgs(kind, model, effort);
+    const id = typeof t.id === "string" ? t.id : [account, model, effort].filter(Boolean).join(":");
+    const maxUsed = typeof t.max_used === "number" ? t.max_used : acc?.maxUsed;
+    return { id, kind, account, model, effort, args, env: { ...(acc?.env ?? {}), ...parseEnv(t.env) }, maxUsed };
   }
   throw new Error(`Invalid target: ${JSON.stringify(spec)}`);
 }
@@ -50,14 +65,28 @@ export function parseTarget(spec: unknown): Target {
 export function parseConfig(toml: string): Config {
   const raw = Bun.TOML.parse(toml) as Record<string, any>;
 
+  const accounts: Config["accounts"] = {};
+  for (const [name, def] of Object.entries<any>(raw.accounts ?? {})) {
+    if (typeof def?.kind !== "string") throw new Error(`Account "${name}" needs a string \`kind\``);
+    accounts[name] = { name, kind: def.kind, env: parseEnv(def.env), maxUsed: typeof def.max_used === "number" ? def.max_used : undefined };
+  }
+
   const tiers: Config["tiers"] = {};
   for (const [name, def] of Object.entries<any>(raw.tiers ?? {})) {
     if (!Array.isArray(def?.chain) || def.chain.length === 0) {
       throw new Error(`Tier "${name}" needs a non-empty \`chain\``);
     }
-    tiers[name] = def.chain.map(parseTarget);
+    tiers[name] = {
+      chain: def.chain.map((t: unknown) => parseTarget(t, accounts)),
+      fallbackTier: def.fallback_tier,
+      description: def.description,
+      instructions: def.instructions,
+    };
   }
   if (Object.keys(tiers).length === 0) throw new Error("Config defines no [tiers.*]");
+  for (const [name, t] of Object.entries(tiers)) {
+    if (t.fallbackTier && !tiers[t.fallbackTier]) throw new Error(`Tier "${name}" has unknown fallback_tier "${t.fallbackTier}"`);
+  }
 
   const defaultTier: string = raw.default_tier ?? Object.keys(tiers)[0]!;
   if (!tiers[defaultTier]) throw new Error(`default_tier "${defaultTier}" is not a defined tier`);
@@ -73,6 +102,7 @@ export function parseConfig(toml: string): Config {
   return {
     defaultTier,
     defaultCooldownMs: parseDuration(raw.default_cooldown ?? "2h"),
+    defaultMaxUsed: Number(raw.default_max_used ?? 90),
     probeSeconds: Number(raw.probe_seconds ?? 10),
     classifier: {
       mode,
@@ -80,6 +110,7 @@ export function parseConfig(toml: string): Config {
       jevCostTier: raw.classifier?.jev_cost_tier ?? "low",
     },
     rules,
+    accounts,
     tiers,
     limitPatterns: raw.limit_patterns
       ? (raw.limit_patterns as string[]).map((p) => new RegExp(p, "i"))

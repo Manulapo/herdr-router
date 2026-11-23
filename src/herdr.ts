@@ -24,8 +24,9 @@ export function herdr(args: string[], opts: { allowFail?: boolean } = {}): any {
 
 export const insideHerdr = (): boolean => process.env.HERDR_ENV === "1";
 
-export function splitPane(cwd: string, direction: "right" | "down"): string {
-  const r = herdr(["pane", "split", "--current", "--direction", direction, "--cwd", cwd, "--no-focus"]);
+export function splitPane(cwd: string, direction: "right" | "down", env: Record<string, string> = {}): string {
+  const envArgs = Object.entries(env).flatMap(([k, v]) => ["--env", `${k}=${v}`]);
+  const r = herdr(["pane", "split", "--current", "--direction", direction, "--cwd", cwd, "--no-focus", ...envArgs]);
   const id = r?.result?.pane?.pane_id;
   if (!id) throw new HerdrError("pane split returned no pane id");
   return id;

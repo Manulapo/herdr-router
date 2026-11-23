@@ -4,7 +4,7 @@
   "description": "Opinionated tier-based model router for Herdr: pick the right agent and model per task, fall back automatically when a 5-hour limit is hit.",
   "license": "MIT",
   "type": "module",
-  "bin": { "hroute": "./bin/hroute.ts" },
+  "bin": { "hroute": "./bin/hroute.ts", "hsub": "./bin/hsub.ts" },
   "files": ["bin", "src", "routing.example.toml", "README.md", "LICENSE"],
   "engines": { "bun": ">=1.2.0" },
   "scripts": {

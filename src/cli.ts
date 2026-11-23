@@ -1,11 +1,15 @@
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { classify } from "./classify.ts";
 import { configCandidates, findConfig, loadConfig } from "./config.ts";
 import { formatRemaining, parseDuration } from "./duration.ts";
 import { insideHerdr } from "./herdr.ts";
+import { syncAgents } from "./agents.ts";
 import { run } from "./run.ts";
+import { runSub } from "./sub.ts";
+import { getUsage, writeClaudeUsage } from "./usage.ts";
 import { clearExhausted, loadState, markExhausted, statePath } from "./state.ts";
 
 const HELP = `hroute - tier-based model routing for Herdr
@@ -13,9 +17,12 @@ const HELP = `hroute - tier-based model routing for Herdr
 Usage:
   hroute run [--tier <t>] [--cwd <dir>] [--direction right|down] [--wait] [--dry-run] <prompt>
   hroute explain <prompt>          Show tier + fallback chain without launching anything
-  hroute status                    Show tiers, chains and parked (limit-hit) targets
-  hroute mark <target> [--for 5h]  Park a target manually, e.g. claude:opus
-  hroute reset [target]            Un-park one target, or all
+  hroute sub <tier> [--cwd <dir>] <task>   Headless one-shot on the first usable target (also: hsub)
+  hroute sync-agents [--dir <d>]   Write Claude Code subagents hr-<tier>.md (model follows live usage)
+  hroute status                    Tiers, chains, 5h usage and parked accounts
+  hroute usage-sink <account>      Read statusline JSON on stdin, record the 5h usage for <account>
+  hroute mark <account|target> [--for 5h]  Park an account manually, e.g. claude-work
+  hroute reset [account|target]    Un-park one, or all
   hroute init                      Copy routing.example.toml to ~/.config/herdr-router/
   hroute doctor                    Check herdr, config and optional Jev key
 
@@ -40,6 +47,8 @@ export async function main(argv: string[]): Promise<number> {
       "dry-run": { type: "boolean", default: false },
       for: { type: "string", default: "5h" },
       json: { type: "boolean", default: false },
+      dir: { type: "string" },
+      timeout: { type: "string", default: "10m" },
     },
   });
 
@@ -68,7 +77,8 @@ export async function main(argv: string[]): Promise<number> {
       else {
         console.log(`tier   ${c.tier}  (${c.source}${c.detail ? `: ${c.detail}` : ""})`);
         for (const a of result.attempts) console.log(`  ${a.outcome.padEnd(18)} ${a.target}${a.detail ? `  ${a.detail}` : ""}`);
-        console.log(result.chosen ? `-> ${result.chosen}${result.pane ? ` in pane ${result.pane}` : " (dry run)"}` : "-> no target available");
+        const hop = result.usedTier && result.usedTier !== c.tier ? ` [fallback tier: ${result.usedTier}]` : "";
+        console.log(result.chosen ? `-> ${result.chosen}${hop}${result.pane ? ` in pane ${result.pane}` : " (dry run)"}` : "-> no target available");
       }
       return result.chosen ? 0 : 2;
     }
@@ -77,21 +87,62 @@ export async function main(argv: string[]): Promise<number> {
       const { config, path } = loadConfig();
       const parked = loadState().exhausted;
       console.log(`config  ${path}\nstate   ${statePath()}\n`);
-      for (const [tier, chain] of Object.entries(config.tiers)) {
-        const label = tier === config.defaultTier ? `${tier} (default)` : tier;
-        console.log(label);
-        for (const t of chain) {
-          const p = parked[t.id];
-          const note = p ? `  PARKED ${formatRemaining(new Date(p.until).getTime() - Date.now())} - ${p.reason}` : "";
-          console.log(`  ${t.id}${note}`);
+      const seen = new Set<string>();
+      console.log("accounts");
+      for (const tier of Object.values(config.tiers))
+        for (const t of tier.chain) {
+          if (seen.has(t.account)) continue;
+          seen.add(t.account);
+          const u = getUsage(t);
+          const p = parked[t.account];
+          const usage = u ? `${Math.round(u.usedPercent)}% used${u.resetsAt && u.resetsAt.getTime() > Date.now() ? `, resets in ${formatRemaining(u.resetsAt.getTime() - Date.now())}` : ""}` : "usage unknown";
+          const max = t.maxUsed ?? config.defaultMaxUsed;
+          const park = p ? `  PARKED ${formatRemaining(new Date(p.until).getTime() - Date.now())} (${p.reason})` : "";
+          console.log(`  ${t.account.padEnd(16)} ${usage} (switch at ${max}%)${park}`);
         }
+      console.log();
+      for (const [name, tier] of Object.entries(config.tiers)) {
+        console.log(`${name === config.defaultTier ? `${name} (default)` : name}${tier.fallbackTier ? `  -> falls back to ${tier.fallbackTier}` : ""}`);
+        for (const t of tier.chain) console.log(`  ${t.id}`);
       }
+      return 0;
+    }
+
+    case "sub": {
+      const [tier, ...words] = positionals;
+      const task = words.join(" ").trim();
+      if (!tier || !task) throw new Error("Usage: hroute sub <tier> <task>");
+      const { config } = loadConfig();
+      if (!config.tiers[tier]) throw new Error(`Unknown tier "${tier}". Defined: ${Object.keys(config.tiers).join(", ")}`);
+      const r = await runSub(config, tier, task, { cwd: values.cwd ?? process.cwd(), timeoutMs: parseDuration(values.timeout) });
+      for (const a of r.attempts) if (a.outcome !== "started") console.error(`hsub: ${a.outcome} ${a.target}${a.detail ? ` - ${a.detail}` : ""}`);
+      if (!r.chosen) {
+        console.error("hsub: no target available");
+        return 2;
+      }
+      console.error(`hsub: ran on ${r.chosen}`);
+      process.stdout.write(r.output);
+      return r.exitCode;
+    }
+
+    case "sync-agents": {
+      const { config } = loadConfig();
+      const dir = values.dir ?? join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"), "agents");
+      const ctx = { exhausted: loadState().exhausted, usage: (t: any) => getUsage(t) };
+      for (const r of syncAgents(config, ctx, dir)) console.log(`${r.action.padEnd(18)} ${r.file}  model=${r.model ?? "(inherit)"}`);
+      return 0;
+    }
+
+    case "usage-sink": {
+      const account = positionals[0];
+      if (!account) throw new Error("Usage: hroute usage-sink <account>   (statusline JSON on stdin)");
+      writeClaudeUsage(account, await Bun.stdin.text());
       return 0;
     }
 
     case "mark": {
       const target = positionals[0];
-      if (!target) throw new Error("Usage: hroute mark <target> [--for 5h]");
+      if (!target) throw new Error("Usage: hroute mark <account|target> [--for 5h]");
       markExhausted(target, new Date(Date.now() + parseDuration(values.for)), "manual");
       console.log(`parked ${target} for ${values.for}`);
       return 0;
