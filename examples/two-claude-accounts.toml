@@ -1,0 +1,18 @@
+# A personal and a work Claude login. Log each in once:
+#   CLAUDE_CONFIG_DIR=~/.claude-work claude
+# and add `echo "$input" | hroute usage-sink claude-work >/dev/null 2>&1 &` to that
+# account's statusLine command (and `... usage-sink claude ...` to the default one).
+default_tier = "impl"
+default_max_used = 85
+
+[accounts.claude-work]
+kind = "claude"
+env = { CLAUDE_CONFIG_DIR = "~/.claude-work" }
+
+[tiers.impl]
+# The personal account first; when it nears 85%, the work account takes over.
+chain = ["claude:sonnet", "claude-work:sonnet"]
+fallback_tier = "quick"
+
+[tiers.quick]
+chain = ["claude:haiku", "claude-work:haiku"]

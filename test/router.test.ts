@@ -495,3 +495,38 @@ describe("on-switch handoff", () => {
     expect(await ensureFreshHandoff({ cwd: "/p", config: cfg, dir: d, run: async () => null })).toBe("failed");
   });
 });
+
+import { readdirSync } from "node:fs";
+import { commandHelp, COMMANDS, overview, suggest } from "../src/help.ts";
+
+describe("examples", () => {
+  const dir = new URL("../examples/", import.meta.url).pathname;
+  for (const f of readdirSync(dir).filter((x) => x.endsWith(".toml"))) {
+    test(`${f} parses`, async () => {
+      const cfg = parseConfig(await Bun.file(dir + f).text());
+      expect(Object.keys(cfg.tiers).length).toBeGreaterThan(0);
+    });
+  }
+});
+
+describe("help", () => {
+  test("every command has usage and summary, and shows up in the overview", () => {
+    for (const [name, c] of Object.entries(COMMANDS)) {
+      expect(c.usage).toContain("hroute");
+      expect(c.summary.length).toBeGreaterThan(10);
+      expect(overview()).toContain(name);
+      expect(commandHelp(name)).toContain(c.usage);
+    }
+    expect(commandHelp("nope")).toBeNull();
+  });
+  test("typos get a suggestion, nonsense does not", () => {
+    expect(suggest("stauts")).toBe("status");
+    expect(suggest("sync-agent")).toBe("sync-agents");
+    expect(suggest("zzzzzzzzzz")).toBeNull();
+  });
+  test("every command the CLI handles has help", async () => {
+    const src = await Bun.file(new URL("../src/cli.ts", import.meta.url)).text();
+    const handled = [...src.matchAll(/case "([a-z-]+)":/g)].map((m) => m[1]!);
+    for (const c of handled) expect(COMMANDS[c]).toBeDefined();
+  });
+});

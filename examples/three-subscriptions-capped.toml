@@ -1,0 +1,31 @@
+# Claude + Codex + Antigravity, capped at mid-range models: Sonnet / Sol for real work,
+# Haiku / Luna for the rest, Antigravity only as a last resort.
+# Model names are examples: check `claude --help`, `codex debug models` and `agy models`.
+default_tier = "impl"
+default_max_used = 90
+
+[classifier]
+mode = "auto"          # Jev if OPENROUTER_API_KEY is set, otherwise Haiku
+
+[hook]
+debug = false          # true while trying it out
+session_model = "sonnet"
+
+[[rules]]
+tier = "plan"
+match = ["\\b(architect|design|plan|rfc|trade-?off|root cause|review|security)\\b"]
+
+[[rules]]
+tier = "quick"
+match = ["\\b(grep|find|list|rename|typo|summari[sz]e|explain|format|lint)\\b"]
+
+[tiers.plan]
+chain = ["claude:claude-sonnet-5-5", "codex:gpt-6.1-sol:high", "agy:gemini-4-carbon-medium"]
+fallback_tier = "impl"
+
+[tiers.impl]
+chain = ["claude:claude-sonnet-5-5", "codex:gpt-6.1-sol:medium", "agy:gemini-4-carbon-medium"]
+fallback_tier = "quick"
+
+[tiers.quick]
+chain = ["claude:claude-haiku-5-5", "codex:gpt-6-luna:low", "agy:gemini-3.8-flash-medium"]

@@ -5,7 +5,7 @@
   "license": "MIT",
   "type": "module",
   "bin": { "hroute": "./bin/hroute.ts", "hsub": "./bin/hsub.ts" },
-  "files": ["bin", "src", "routing.example.toml", ".env.example", "README.md", "LICENSE"],
+  "files": ["bin", "src", "docs", "examples", "routing.example.toml", ".env.example", "README.md", "LICENSE"],
   "engines": { "bun": ">=1.2.0" },
   "scripts": {
     "test": "bun test",

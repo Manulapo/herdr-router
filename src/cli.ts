@@ -11,6 +11,7 @@ import { insideHerdr } from "./herdr.ts";
 import { syncAgents } from "./agents.ts";
 import { clearHandoff, ensureFreshHandoff, extractTranscriptText, isSwitch, loadSource, recordSource, gitFacts, handoffPath, loadHandoff, renderHandoff, updateHandoff, withHandoff } from "./handoff.ts";
 import { claudeUsable, hook, mergeHooks } from "./hook.ts";
+import { commandHelp, overview, suggest } from "./help.ts";
 import { planCandidates } from "./plan.ts";
 import { run } from "./run.ts";
 import type { Config } from "./types.ts";
@@ -18,27 +19,6 @@ import { runSub } from "./sub.ts";
 import { getUsage, writeClaudeUsage } from "./usage.ts";
 import { clearExhausted, loadState, markExhausted, statePath } from "./state.ts";
 
-const HELP = `hroute - tier-based model routing for Herdr
-
-Usage:
-  hroute run [--tier <t>] [--cwd <dir>] [--direction right|down] [--wait] [--dry-run] <prompt>
-  hroute explain <prompt>          Show tier + fallback chain without launching anything
-  hroute sub <tier> [--cwd <dir>] <task>   Headless one-shot on the first usable target (also: hsub)
-  hroute sync-agents [--dir <d>]   Write Claude Code subagents hr-<tier>.md (model follows live usage)
-  hroute hook                      UserPromptSubmit hook: classify the prompt, hint Claude where to route it
-  hroute install-hook [--write]    Show (or merge, with a backup) the hooks into Claude Code's settings.json
-  hroute handoff show|clear|update [--cwd d]   The note passed to the next agent (rewritten by Haiku in the background)
-  hroute log [-n 20]               Recent routing decisions (hook, run, sub)
-  hroute status                    Tiers, chains, 5h usage and parked accounts
-  hroute usage-sink <account>      Read statusline JSON on stdin, record the 5h usage for <account>
-  hroute mark <account|target> [--for 5h]  Park an account manually, e.g. claude-work
-  hroute reset [account|target]    Un-park one, or all
-  hroute init                      Copy routing.example.toml and .env.example to ~/.config/herdr-router/
-  hroute doctor                    Check herdr, config and optional Jev key
-
-Config: $HROUTE_CONFIG, ./routing.toml, ~/.config/herdr-router/routing.toml
-Secrets: real environment first, then ~/.config/herdr-router/.env (or $HROUTE_ENV)
-`;
 
 /** Before handing work to another account, bring the handoff note up to date (once, only if stale). */
 async function prepareHandoff(config: Config, tier: string, cwd: string): Promise<void> {
@@ -56,9 +36,31 @@ async function prepareHandoff(config: Config, tier: string, cwd: string): Promis
 export async function main(argv: string[]): Promise<number> {
   loadEnvFile();
   const [cmd, ...rest] = argv;
-  if (!cmd || cmd === "-h" || cmd === "--help" || cmd === "help") {
-    console.log(HELP);
+  if (!cmd || cmd === "-h" || cmd === "--help") {
+    console.log(overview());
     return 0;
+  }
+  if (cmd === "help") {
+    const topic = rest[0];
+    if (!topic) {
+      console.log(overview());
+      return 0;
+    }
+    const text = commandHelp(topic);
+    if (!text) {
+      const near = suggest(topic);
+      console.error(`No help for "${topic}".${near ? ` Did you mean "${near}"?` : ""}\n\n${overview()}`);
+      return 1;
+    }
+    console.log(text);
+    return 0;
+  }
+  if (rest.includes("-h") || rest.includes("--help")) {
+    const text = commandHelp(cmd);
+    if (text) {
+      console.log(text);
+      return 0;
+    }
   }
 
   const { values, positionals } = parseArgs({
@@ -312,7 +314,8 @@ export async function main(argv: string[]): Promise<number> {
     }
 
     default:
-      console.error(`Unknown command "${cmd}"\n\n${HELP}`);
+      const near = suggest(cmd);
+      console.error(`Unknown command "${cmd}".${near ? ` Did you mean "${near}"?` : ""}\nRun \`hroute help\` for the list.`);
       return 1;
   }
 }

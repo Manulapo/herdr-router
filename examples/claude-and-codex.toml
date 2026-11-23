@@ -1,0 +1,21 @@
+# One Claude and one Codex subscription. Replace the model names with ones your accounts can use.
+default_tier = "impl"
+
+[[rules]]
+tier = "plan"
+match = ["\\b(architect|design|rfc|root cause|review|security)\\b"]
+
+[[rules]]
+tier = "quick"
+match = ["\\b(grep|find|rename|typo|summari[sz]e|explain|format|lint)\\b"]
+
+[tiers.plan]
+chain = ["claude:sonnet", "codex:gpt-5.5:high"]
+fallback_tier = "impl"
+
+[tiers.impl]
+chain = ["claude:sonnet", "codex:gpt-5.5:medium"]
+fallback_tier = "quick"
+
+[tiers.quick]
+chain = ["claude:haiku", "codex:gpt-5.5:low"]
