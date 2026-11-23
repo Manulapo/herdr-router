@@ -61,6 +61,8 @@ match = ["\\b(grep|find|list|rename|typo|summari[sz]e|explain|format|lint)\\b"]
 # A target is skipped when its account is parked (limit hit) or its 5h usage
 # is at/over max_used. `fallback_tier` is where to go when the whole chain is
 # unavailable: that is the "switch to something simpler" step.
+# strategy = "least-used" balances subscriptions: the usable target with the lowest
+# 5h usage goes first (unknown usage goes last, in chain order). Default: "ordered".
 # Table form for full control:
 #   { account = "claude-work", model = "opus", max_used = 70, env = { FOO = "1" } }
 [tiers.plan]

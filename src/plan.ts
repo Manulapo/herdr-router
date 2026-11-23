@@ -23,18 +23,28 @@ export function planCandidates(config: Config, tier: string, ctx: PlanContext): 
   const seen = new Set<string>();
   for (let t: string | undefined = tier; t && !seen.has(t); t = config.tiers[t]?.fallbackTier) {
     seen.add(t);
-    for (const target of config.tiers[t]!.chain) {
+    const tierDef = config.tiers[t]!;
+    const entries: (Candidate & { pct?: number })[] = [];
+    for (const target of tierDef.chain) {
       const parked = ctx.exhausted[target.account] ?? ctx.exhausted[target.id];
       let skip: string | undefined;
+      let pct: number | undefined;
       if (parked) {
         skip = `parked until ${parked.until}`;
       } else {
         const u = ctx.usage(target);
+        pct = u?.usedPercent;
         const max = target.maxUsed ?? config.defaultMaxUsed;
         if (u && u.usedPercent >= max) skip = `5h usage ${Math.round(u.usedPercent)}% >= ${max}%`;
       }
-      out.push({ tier: t, target, skip });
+      entries.push({ tier: t, target, skip, pct });
     }
+    if (tierDef.strategy === "least-used") {
+      const rank = (e: { skip?: string; pct?: number }) => (e.skip ? 2 : e.pct === undefined ? 1 : 0);
+      // Array.sort is stable: ties and unknown-usage targets keep their chain order.
+      entries.sort((a, b) => rank(a) - rank(b) || (rank(a) === 0 ? a.pct! - b.pct! : 0));
+    }
+    out.push(...entries.map(({ tier, target, skip }) => ({ tier, target, skip })));
   }
   return out;
 }

@@ -79,11 +79,15 @@ export function parseConfig(toml: string): Config {
     tiers[name] = {
       chain: def.chain.map((t: unknown) => parseTarget(t, accounts)),
       fallbackTier: def.fallback_tier,
+      strategy: def.strategy ?? "ordered",
       description: def.description,
       instructions: def.instructions,
     };
   }
   if (Object.keys(tiers).length === 0) throw new Error("Config defines no [tiers.*]");
+  for (const [name, t] of Object.entries(tiers)) {
+    if (t.strategy !== "ordered" && t.strategy !== "least-used") throw new Error(`Tier "${name}" strategy must be "ordered" or "least-used"`);
+  }
   for (const [name, t] of Object.entries(tiers)) {
     if (t.fallbackTier && !tiers[t.fallbackTier]) throw new Error(`Tier "${name}" has unknown fallback_tier "${t.fallbackTier}"`);
   }

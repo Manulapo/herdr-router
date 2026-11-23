@@ -14,6 +14,7 @@ hroute run -t quick "rename foo to bar"        # explicit tier
 
 ## What it can do
 
+- **Balanced subscriptions.** `strategy = "least-used"` sends work to whichever account has the emptiest 5h window.
 - **Several subscriptions.** Define accounts (two Claude logins, two Codex logins) and chain them.
 - **Switch at a usage threshold.** A target is skipped once its 5h window is e.g. 90% used, using the *real* percentage (see [Usage sources](#usage-sources)), and the chain falls through to the next account or model.
 - **Step down to something simpler.** `fallback_tier = "quick"` means: when nothing in `plan` is usable, take the `impl`/`quick` chain instead.

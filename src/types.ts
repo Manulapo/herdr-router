@@ -25,6 +25,8 @@ export interface Tier {
   chain: Target[];
   /** Simpler tier to fall into when everything in this chain is unavailable. */
   fallbackTier?: string;
+  /** ordered: chain order. least-used: usable targets with known 5h usage first, lowest % first; unknown usage keeps chain order after them. */
+  strategy: "ordered" | "least-used";
   description?: string;
   instructions?: string;
 }

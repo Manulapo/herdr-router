@@ -298,3 +298,27 @@ describe("install-hook merge", () => {
     expect(mergeHooks(first.settings).changed).toBe(false);
   });
 });
+
+describe("least-used strategy", () => {
+  const c = parseConfig(`
+[tiers.impl]
+strategy = "least-used"
+chain = ["claude:s", "codex:m", "agy:g"]
+`);
+  const usage = (map: Record<string, number>) => (t: any) => (t.account in map ? { usedPercent: map[t.account]!, source: "t" } : null);
+  const order = (u: any, exhausted = {}) => planCandidates(c, "impl", { exhausted, usage: u }).filter((x) => !x.skip).map((x) => x.target.account);
+  test("lowest known usage first, unknown last", () => {
+    expect(order(usage({ claude: 70, codex: 20 }))).toEqual(["codex", "claude", "agy"]);
+    expect(order(usage({ claude: 10, codex: 20 }))).toEqual(["claude", "codex", "agy"]);
+  });
+  test("unknown usage keeps chain order after known ones", () => {
+    expect(order(usage({ codex: 80 }))).toEqual(["codex", "claude", "agy"]);
+  });
+  test("over-threshold and parked still drop out", () => {
+    expect(order(usage({ claude: 95, codex: 30 }))).toEqual(["codex", "agy"]);
+    expect(order(usage({ claude: 5, codex: 30 }), { claude: {} })).toEqual(["codex", "agy"]);
+  });
+  test("rejects unknown strategy", () => {
+    expect(() => parseConfig('[tiers.a]\nstrategy="random"\nchain=["claude"]')).toThrow();
+  });
+});
