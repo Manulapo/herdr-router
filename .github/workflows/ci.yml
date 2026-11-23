@@ -2,6 +2,8 @@ name: CI
 on:
   push: { branches: [main] }
   pull_request:
+permissions:
+  contents: read
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -9,5 +11,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
-      - run: bun run typecheck
-      - run: bun test
+      - run: bun run check
+      - name: Smoke test the CLI against the example config
+        env:
+          HROUTE_CONFIG: routing.example.toml
+          HROUTE_STATE: /tmp/hroute-ci-state.json
+        run: |
+          bun bin/hroute.ts help > /dev/null
+          bun bin/hroute.ts explain "fix a typo in the readme" | grep -q "tier   quick"
+          bun bin/hroute.ts status > /dev/null
+          for f in examples/*.toml; do HROUTE_CONFIG="$f" bun bin/hroute.ts status > /dev/null; done
+      - name: Installer syntax
+        run: sh -n install.sh

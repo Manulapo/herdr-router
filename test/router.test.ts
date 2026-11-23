@@ -530,3 +530,80 @@ describe("help", () => {
     for (const c of handled) expect(COMMANDS[c]).toBeDefined();
   });
 });
+
+import { patchStatusline, runSetup } from "../src/setup.ts";
+import { existsSync as exists, readFileSync as read } from "node:fs";
+
+describe("setup", () => {
+  test("statusline patch handles the common shapes and refuses unsafe ones", () => {
+    const a = patchStatusline('input=$(cat); model=$(echo "$input" | jq -r .m); echo "$model"')!;
+    expect(a.changed).toBe(true);
+    expect(a.command).toContain('input=$(cat); echo "$input" | hroute usage-sink claude >/dev/null 2>&1 & model=');
+    const b = patchStatusline('input=$(cat)\nmodel=1\necho $model')!;
+    expect(b.command).toContain("usage-sink claude");
+    expect(b.command).toContain("& model=1");
+    expect(patchStatusline(a.command)!.changed).toBe(false); // idempotent
+    expect(patchStatusline("echo hi")).toBeNull();
+    // the result must still be valid shell
+    expect(Bun.spawnSync(["sh", "-n", "-c", a.command]).exitCode).toBe(0);
+    expect(Bun.spawnSync(["sh", "-n", "-c", b.command]).exitCode).toBe(0);
+  });
+
+  test("dry run changes nothing; --yes applies, backs up, keeps existing hooks, and is idempotent", () => {
+    const root = mk(join(tmpdir(), "hroute-setup-"));
+    const saved = { ...process.env };
+    process.env.CLAUDE_CONFIG_DIR = join(root, "claude");
+    process.env.XDG_CONFIG_HOME = join(root, "xdg");
+    process.env.HROUTE_STATE = join(root, "state", "state.json");
+    delete process.env.HROUTE_ENV;
+    delete process.env.HROUTE_CONFIG;
+    try {
+      const settingsFile = join(root, "claude", "settings.json");
+      writeFileSync(join(root, "xdg-dummy"), "");
+      require("node:fs").mkdirSync(join(root, "claude"), { recursive: true });
+      writeFileSync(settingsFile, JSON.stringify({ model: "sonnet", statusLine: { type: "command", command: 'input=$(cat); echo "$input" | jq -r .model' }, hooks: { Stop: [{ hooks: [{ type: "command", command: "other" }] }] } }));
+      const before = read(settingsFile, "utf8");
+
+      const dry = runSetup({ apply: false, link: false });
+      expect(dry.some((s) => s.state === "would")).toBe(true);
+      expect(read(settingsFile, "utf8")).toBe(before);
+      expect(exists(join(root, "xdg", "herdr-router", "routing.toml"))).toBe(false);
+
+      const first = runSetup({ apply: true, link: false });
+      expect(first.find((s) => s.name === "hooks")!.state).toBe("done");
+      expect(first.find((s) => s.name === "usage line")!.state).toBe("done");
+      expect(exists(`${settingsFile}.pre-hroute`)).toBe(true);
+      expect(read(`${settingsFile}.pre-hroute`, "utf8")).toBe(before);
+      expect(exists(join(root, "xdg", "herdr-router", ".env"))).toBe(true);
+      expect(exists(join(root, "claude", "agents", "hr-quick.md"))).toBe(true);
+      const s = JSON.parse(read(settingsFile, "utf8"));
+      expect(s.model).toBe("sonnet");
+      expect(s.hooks.Stop.map((g: any) => g.hooks[0].command)).toEqual(["other", "hroute handoff update --hook"]);
+      expect(s.statusLine.command).toContain("usage-sink");
+
+      const second = runSetup({ apply: true, link: false });
+      expect(second.filter((s) => s.state === "done").map((s) => s.name)).toEqual(["subagents"]); // everything else already in place
+      expect(second.find((s) => s.name === "hooks")!.state).toBe("already");
+    } finally {
+      for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+      Object.assign(process.env, saved);
+    }
+  });
+
+  test("invalid settings.json is reported, never overwritten", () => {
+    const root = mk(join(tmpdir(), "hroute-setup2-"));
+    const saved = { ...process.env };
+    process.env.CLAUDE_CONFIG_DIR = join(root, "claude");
+    process.env.XDG_CONFIG_HOME = join(root, "xdg");
+    try {
+      require("node:fs").mkdirSync(join(root, "claude"), { recursive: true });
+      writeFileSync(join(root, "claude", "settings.json"), "{ not json");
+      const steps = runSetup({ apply: true, link: false });
+      expect(steps.at(-1)!.state).toBe("manual");
+      expect(read(join(root, "claude", "settings.json"), "utf8")).toBe("{ not json");
+    } finally {
+      for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+      Object.assign(process.env, saved);
+    }
+  });
+});

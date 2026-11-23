@@ -1,5 +1,16 @@
 # Getting started
 
+## Fast path
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Manulapo/herdr-router/main/install.sh | sh
+hroute setup           # preview
+hroute setup --yes     # apply: config, .env, PATH links, statusline usage line, hooks, subagents
+hroute doctor
+```
+
+`setup` is idempotent, previews before changing anything and backs up `settings.json`. Anything it cannot do safely is listed as `TODO`. The rest of this page is the same thing done by hand, step by step.
+
 ## 1. Install
 
 ```sh

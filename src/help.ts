@@ -90,6 +90,14 @@ export const COMMANDS: Record<string, CommandHelp> = {
     summary: "Read Claude statusline JSON on stdin and record the 5h usage for an account.",
     details: 'Add `echo "$input" | hroute usage-sink claude >/dev/null 2>&1 &` to your statusLine command, right after `input=$(cat)`.',
   },
+  setup: {
+    usage: "hroute setup [--yes]",
+    summary: "One-shot setup: config and .env, PATH links, statusline usage line, Claude Code hooks, subagents.",
+    details:
+      "Without --yes it only reports what it would do. With --yes it applies everything, backing up ~/.claude/settings.json first (settings.json.pre-hroute, then .bak). Idempotent: safe to re-run. Steps that cannot be automated safely are listed as TODO.",
+    options: [["-y, --yes", "Apply the changes (default: preview only)."]],
+    examples: ["hroute setup", "hroute setup --yes"],
+  },
   init: {
     usage: "hroute init",
     summary: "Create ~/.config/herdr-router/routing.toml and a chmod-600 .env from the examples. Never overwrites.",
@@ -100,7 +108,7 @@ export const COMMANDS: Record<string, CommandHelp> = {
   },
 };
 
-const ORDER = ["run", "explain", "sub", "status", "log", "mark", "reset", "hook", "install-hook", "sync-agents", "handoff", "usage-sink", "init", "doctor"];
+const ORDER = ["setup", "run", "explain", "sub", "status", "log", "mark", "reset", "hook", "install-hook", "sync-agents", "handoff", "usage-sink", "init", "doctor"];
 
 const pad = (s: string, n: number) => s + " ".repeat(Math.max(1, n - s.length));
 

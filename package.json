@@ -4,15 +4,45 @@
   "description": "Opinionated tier-based model router for Herdr: pick the right agent and model per task, fall back automatically when a 5-hour limit is hit.",
   "license": "MIT",
   "type": "module",
-  "bin": { "hroute": "./bin/hroute.ts", "hsub": "./bin/hsub.ts" },
-  "files": ["bin", "src", "docs", "examples", "routing.example.toml", ".env.example", "README.md", "LICENSE"],
-  "engines": { "bun": ">=1.2.0" },
+  "bin": {
+    "hroute": "./bin/hroute.ts",
+    "hsub": "./bin/hsub.ts"
+  },
+  "files": [
+    "bin",
+    "src",
+    "docs",
+    "examples",
+    "routing.example.toml",
+    ".env.example",
+    "install.sh",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "bun": ">=1.2.0"
+  },
   "scripts": {
     "test": "bun test",
-    "typecheck": "bunx tsc --noEmit"
+    "typecheck": "bunx tsc --noEmit",
+    "check": "bun run typecheck && bun test",
+    "prepare": "git config core.hooksPath .githooks 2>/dev/null || true"
   },
   "devDependencies": {
     "@types/bun": "latest",
     "typescript": "^5.7.3"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Manulapo/herdr-router.git"
+  },
+  "homepage": "https://github.com/Manulapo/herdr-router#readme",
+  "keywords": [
+    "herdr",
+    "claude-code",
+    "codex",
+    "ai-agents",
+    "model-routing",
+    "cli"
+  ]
 }

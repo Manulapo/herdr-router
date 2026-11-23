@@ -13,6 +13,7 @@ import { clearHandoff, ensureFreshHandoff, extractTranscriptText, isSwitch, load
 import { claudeUsable, hook, mergeHooks } from "./hook.ts";
 import { commandHelp, overview, suggest } from "./help.ts";
 import { planCandidates } from "./plan.ts";
+import { formatStep, runSetup } from "./setup.ts";
 import { run } from "./run.ts";
 import type { Config } from "./types.ts";
 import { runSub } from "./sub.ts";
@@ -76,6 +77,7 @@ export async function main(argv: string[]): Promise<number> {
       json: { type: "boolean", default: false },
       dir: { type: "string" },
       write: { type: "boolean", default: false },
+      yes: { type: "boolean", short: "y", default: false },
       hook: { type: "boolean", default: false },
       n: { type: "string", short: "n", default: "20" },
       transcript: { type: "string" },
@@ -140,6 +142,17 @@ export async function main(argv: string[]): Promise<number> {
       for (const [name, tier] of Object.entries(config.tiers)) {
         console.log(`${name === config.defaultTier ? `${name} (default)` : name}${tier.fallbackTier ? `  -> falls back to ${tier.fallbackTier}` : ""}`);
         for (const t of tier.chain) console.log(`  ${t.id}`);
+      }
+      return 0;
+    }
+
+    case "setup": {
+      const steps = runSetup({ apply: values.yes, binDir: new URL("../bin/", import.meta.url).pathname });
+      for (const s of steps) console.log(formatStep(s));
+      if (!values.yes) console.log("\nNothing was changed. Re-run with --yes to apply (settings.json is backed up first).");
+      else {
+        console.log("\nNext: open a new Claude Code session, then run `hroute doctor`.");
+        if (steps.some((s) => s.state === "manual")) console.log("Some steps need a manual edit (TODO above).");
       }
       return 0;
     }
