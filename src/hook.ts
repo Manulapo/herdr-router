@@ -1,4 +1,5 @@
 import { classify, type Classification } from "./classify.ts";
+import { appendLog } from "./log.ts";
 import { planCandidates, type PlanContext } from "./plan.ts";
 import type { Config } from "./types.ts";
 
@@ -28,6 +29,24 @@ export function buildHint(config: Config, c: Classification, ctx: PlanContext): 
   );
 }
 
+/** One line shown to the user: tier, who decided, the target, and the 5h usage that drove it. */
+export function routeSummary(config: Config, c: Classification, ctx: PlanContext): { line: string; target: string | null } {
+  const cands = planCandidates(config, c.tier, ctx);
+  const first = cands.find((x) => !x.skip);
+  const seen = new Set<string>();
+  const usage = cands
+    .filter((x) => !seen.has(x.target.account) && seen.add(x.target.account))
+    .map((x) => {
+      const u = ctx.usage(x.target);
+      return u ? `${x.target.account} ${Math.round(u.usedPercent)}%` : null;
+    })
+    .filter(Boolean)
+    .join(", ");
+  const hop = first && first.tier !== c.tier ? ` [fallback tier ${first.tier}]` : "";
+  const target = first?.target.id ?? null;
+  return { line: `hroute: ${c.tier} (${c.source}) -> ${target ?? "all exhausted"}${hop}${usage ? ` | 5h: ${usage}` : ""}`, target };
+}
+
 /** UserPromptSubmit hook body: stdin JSON in, hook JSON (or null for "do nothing") out. Never throws. */
 export async function hook(stdin: string, config: Config, ctx: PlanContext): Promise<string | null> {
   try {
@@ -38,9 +57,14 @@ export async function hook(stdin: string, config: Config, ctx: PlanContext): Pro
       llm: config.hook.mode === "auto" && prompt.length >= config.hook.minChars,
       haikuAllowed: claudeUsable(config, ctx),
     });
+    const { line, target } = routeSummary(config, c, ctx);
     const additionalContext = buildHint(config, c, ctx);
-    if (!additionalContext) return null;
-    return JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext } });
+    if (config.hook.debug) appendLog({ via: "hook", tier: c.tier, source: c.source, target, note: additionalContext ? "hint sent" : undefined });
+    if (!additionalContext && !config.hook.debug) return null;
+    return JSON.stringify({
+      ...(config.hook.debug ? { systemMessage: line } : {}),
+      ...(additionalContext ? { hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext } } : {}),
+    });
   } catch {
     return null;
   }

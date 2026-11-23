@@ -121,6 +121,7 @@ export function parseConfig(toml: string): Config {
       minChars: Number(raw.hook?.min_chars ?? 40),
       mode: hookMode,
       sessionModel: String(raw.hook?.session_model ?? ""),
+      debug: raw.hook?.debug ?? false,
     },
     handoff: {
       enabled: raw.handoff?.enabled ?? true,

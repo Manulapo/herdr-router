@@ -56,6 +56,8 @@ export interface Config {
     mode: "auto" | "rules";
     /** Skip the subagent hint when the target model name contains this (session already runs it). */
     sessionModel: string;
+    /** Debug: show a one-line routing summary on every prompt and log each hook decision. */
+    debug: boolean;
   };
   handoff: {
     enabled: boolean;

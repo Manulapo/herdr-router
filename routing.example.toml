@@ -32,6 +32,7 @@ timeout = "15s"
 [hook]
 mode = "auto"                  # "rules" = instant and free, never calls an LLM
 min_chars = 40
+debug = false                  # true: print "hroute: tier (source) -> target | 5h usage" on every prompt and log it (`hroute log`)
 session_model = ""             # e.g. "sonnet": do not suggest a subagent running the model you already use
 
 [[rules]]

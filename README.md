@@ -90,6 +90,8 @@ Rules run first; Jev is asked only when none match, with a 10 s timeout, and any
 
 Classification order: **regex rules** (instant, free) -> **Jev** if `OPENROUTER_API_KEY` is set, otherwise **Haiku** (`claude -p`, about 2 s, your subscription) -> `default_tier`. Haiku is skipped while the Claude account is parked or over threshold. Prompts shorter than `hook.min_chars`, and slash commands, skip the LLM; `[hook] mode = "rules"` makes the hook fully instant and free.
 
+**Debugging.** Set `[hook] debug = true` to see, on every prompt, a one-line summary such as `hroute: quick (rule) -> claude:claude-haiku-5-5 | 5h: claude 42%, codex 0%` (tier, who decided, chosen target, the usage behind it), and to log each decision. Read the log with `hroute log`. It is off by default; `hroute run` and `hsub` are always logged. Note the line shows the *recommended* route: the main reply is still produced by the model your session runs.
+
 This is a *hint*, not a switch: Claude decides whether to follow it. A hook cannot change the running session's model. Internal `claude -p` calls set `HROUTE_INNER=1` so the hook never recurses.
 
 ## Handoff: context for the next agent
@@ -149,6 +151,7 @@ For a second opinion or review run:  hsub plan "<task>"
 | `hroute explain <prompt>` | Show tier and chain without launching |
 | `hroute sub <tier> <task>` (or `hsub`) | Headless one-shot on the first usable target |
 | `hroute sync-agents [--dir d]` | Generate Claude Code subagents `hr-<tier>` |
+| `hroute log [-n 20]` | Recent routing decisions |
 | `hroute hook` / `hroute install-hook [--write]` | Per-message routing hook and its installer |
 | `hroute status` | Accounts with live 5h usage, parked accounts, tiers |
 | `hroute usage-sink <account>` | Record statusline usage (reads JSON on stdin) |

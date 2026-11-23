@@ -412,3 +412,24 @@ describe("handoff", () => {
     expect(mergeHooks({}).settings.hooks.Stop[0].hooks[0].command).toBe("hroute handoff update --hook");
   });
 });
+
+describe("hook debug flag", () => {
+  const input = JSON.stringify({ prompt: "fix the typo in the readme" });
+  const withDebug = (debug: boolean) => ({ ...HK, hook: { ...HK.hook, debug, mode: "rules" as const } });
+  test("debug=true adds a visible summary line; false keeps it out", async () => {
+    const on = JSON.parse((await hook(input, withDebug(true), ctx))!);
+    expect(on.systemMessage).toMatch(/^hroute: quick \(rule\) -> claude:claude-haiku/);
+    const off = JSON.parse((await hook(input, withDebug(false), ctx))!);
+    expect(off.systemMessage).toBeUndefined();
+    expect(off.hookSpecificOutput.additionalContext).toContain("hr-quick");
+  });
+  test("debug=false and no hint means total silence", async () => {
+    expect(await hook(JSON.stringify({ prompt: "add pagination to the users endpoint please" }), withDebug(false), ctx)).toBeNull();
+  });
+  test("summary shows usage and fallback hops", async () => {
+    const hot = (t: any) => (t.account === "claude" ? { usedPercent: 95, source: "t" } : null);
+    const out = JSON.parse((await hook(input, withDebug(true), { exhausted: {}, usage: hot }))!);
+    expect(out.systemMessage).toContain("codex:gpt-6-luna:low");
+    expect(out.systemMessage).toContain("claude 95%");
+  });
+});

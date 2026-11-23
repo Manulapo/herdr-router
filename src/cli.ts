@@ -6,6 +6,7 @@ import { classify } from "./classify.ts";
 import { configCandidates, findConfig, loadConfig } from "./config.ts";
 import { formatRemaining, parseDuration } from "./duration.ts";
 import { envFilePath, isTooOpen, loadEnvFile } from "./env.ts";
+import { formatEntry, appendLog, readLog } from "./log.ts";
 import { insideHerdr } from "./herdr.ts";
 import { syncAgents } from "./agents.ts";
 import { clearHandoff, extractTranscriptText, gitFacts, handoffPath, loadHandoff, renderHandoff, updateHandoff, withHandoff } from "./handoff.ts";
@@ -25,6 +26,7 @@ Usage:
   hroute hook                      UserPromptSubmit hook: classify the prompt, hint Claude where to route it
   hroute install-hook [--write]    Show (or merge, with a backup) the hooks into Claude Code's settings.json
   hroute handoff show|clear|update [--cwd d]   The note passed to the next agent (rewritten by Haiku in the background)
+  hroute log [-n 20]               Recent routing decisions (hook, run, sub)
   hroute status                    Tiers, chains, 5h usage and parked accounts
   hroute usage-sink <account>      Read statusline JSON on stdin, record the 5h usage for <account>
   hroute mark <account|target> [--for 5h]  Park an account manually, e.g. claude-work
@@ -58,6 +60,7 @@ export async function main(argv: string[]): Promise<number> {
       dir: { type: "string" },
       write: { type: "boolean", default: false },
       hook: { type: "boolean", default: false },
+      n: { type: "string", short: "n", default: "20" },
       transcript: { type: "string" },
       force: { type: "boolean", default: false },
       "no-handoff": { type: "boolean", default: false },
@@ -86,6 +89,7 @@ export async function main(argv: string[]): Promise<number> {
         wait: values.wait,
         dryRun,
       });
+      if (!dryRun) appendLog({ via: "run", tier: c.tier, source: c.source, target: result.chosen, note: result.pane ? `pane ${result.pane}` : undefined });
       const out = { classification: c, ...result };
       if (values.json) console.log(JSON.stringify(out, null, 2));
       else {
@@ -119,6 +123,12 @@ export async function main(argv: string[]): Promise<number> {
         console.log(`${name === config.defaultTier ? `${name} (default)` : name}${tier.fallbackTier ? `  -> falls back to ${tier.fallbackTier}` : ""}`);
         for (const t of tier.chain) console.log(`  ${t.id}`);
       }
+      return 0;
+    }
+
+    case "log": {
+      const entries = readLog(Number(values.n) || 20);
+      console.log(entries.length ? entries.map(formatEntry).join("\n") : "no routing decisions logged yet");
       return 0;
     }
 
@@ -206,6 +216,7 @@ export async function main(argv: string[]): Promise<number> {
         console.error("hsub: no target available");
         return 2;
       }
+      appendLog({ via: "sub", tier, source: "explicit", target: r.chosen, note: r.usedTier !== tier ? `fallback tier ${r.usedTier}` : undefined });
       console.error(`hsub: ran on ${r.chosen}`);
       process.stdout.write(r.output);
       return r.exitCode;
