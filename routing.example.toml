@@ -1,0 +1,96 @@
+# herdr-router configuration.
+# Search order: $HROUTE_CONFIG, ./routing.toml, ~/.config/herdr-router/routing.toml
+
+default_tier = "impl"
+
+# How long to park a target when a limit is hit but no reset time can be parsed.
+default_cooldown = "2h"
+
+# Switch away from a subscription once its 5h window is this % used.
+# Override per account (max_used) or per target (table form).
+default_max_used = 90
+
+# Seconds to watch a freshly prompted agent for a limit message before
+# handing control back. Real work keeps running in its pane afterwards.
+probe_seconds = 10
+
+# ---- Classification --------------------------------------------------------
+# Regex rules always run first (free, instant). For prompts no rule matches:
+#   auto  : Jev on OpenRouter if OPENROUTER_API_KEY is set, otherwise a tiny
+#           headless Haiku call (`claude -p`, ~2s, uses your subscription)
+#   jev   : only Jev      haiku : only Haiku      rules : no LLM at all
+# Haiku is skipped while the default Claude account is parked / over threshold.
+[classifier]
+mode = "auto"
+jev_model = "typesafe/jev-router"
+jev_cost_tier = "low"          # low | medium | high
+haiku_model = "claude-haiku-5-5"
+timeout = "15s"
+
+# Per-message hook (`hroute install-hook`): classifies each prompt and tells
+# Claude where to route it. Prompts shorter than min_chars skip the LLM step.
+[hook]
+mode = "auto"                  # "rules" = instant and free, never calls an LLM
+min_chars = 40
+debug = false                  # true: print "hroute: tier (source) -> target | 5h usage" on every prompt and log it (`hroute log`)
+session_model = ""             # e.g. "sonnet": do not suggest a subagent running the model you already use
+
+[[rules]]
+tier = "plan"
+match = ["\\b(architect|design|plan|rfc|trade-?off|root cause|review)\\b"]
+
+[[rules]]
+tier = "quick"
+match = ["\\b(grep|find|list|rename|typo|summari[sz]e|explain|format|lint)\\b"]
+
+# ---- Handoff ---------------------------------------------------------------
+# A small note per working directory (goal / done / next / decisions) that is
+# prepended to prompts sent by `hroute run` and `hsub`, so the next agent does
+# not start blind. The Stop hook has Haiku rewrite it in a detached background
+# process (never blocks you) at most once per min_interval.
+[handoff]
+enabled = true
+max_chars = 2000
+max_age = "24h"                # older notes are ignored
+min_interval = "2m"
+
+# ---- Accounts --------------------------------------------------------------
+# Optional. Each account is one subscription login. Without this section every
+# kind ("claude", "codex") is a single implicit account.
+#   Claude: separate logins via CLAUDE_CONFIG_DIR (run `CLAUDE_CONFIG_DIR=~/.claude-work claude` and log in once)
+#   Codex : separate logins via CODEX_HOME
+# [accounts.claude-work]
+# kind = "claude"
+# env = { CLAUDE_CONFIG_DIR = "~/.claude-work" }
+# max_used = 85
+#
+# [accounts.codex-personal]
+# kind = "codex"
+# env = { CODEX_HOME = "~/.codex" }
+
+# ---- Tiers -----------------------------------------------------------------
+# A tier is an ordered fallback chain of "account|kind[:model[:effort]]".
+# A target is skipped when its account is parked (limit hit) or its 5h usage
+# is at/over max_used. `fallback_tier` is where to go when the whole chain is
+# unavailable: that is the "switch to something simpler" step.
+# strategy = "least-used" balances subscriptions: the usable target with the lowest
+# 5h usage goes first (unknown usage goes last, in chain order). Default: "ordered".
+# Table form for full control:
+#   { account = "claude-work", model = "opus", max_used = 70, env = { FOO = "1" } }
+[tiers.plan]
+chain = ["claude:opus", "codex:gpt-5.5:high", "claude:sonnet"]
+fallback_tier = "impl"
+description = "Use for architecture decisions, hard debugging, security-sensitive design and reviews."
+
+[tiers.impl]
+chain = ["claude:sonnet", "codex:gpt-5.5:medium"]
+fallback_tier = "quick"
+
+[tiers.quick]
+chain = ["claude:haiku", "codex:gpt-5.5:low"]
+description = "Use PROACTIVELY for grep, finding definitions, renames, summaries and small mechanical edits."
+
+# ---- Limit detection -------------------------------------------------------
+# Regexes (case-insensitive) matched against the agent's recent terminal output.
+# Omit to use the built-in defaults.
+# limit_patterns = ["usage limit reached", "5-hour limit reached"]
