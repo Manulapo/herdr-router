@@ -12,6 +12,8 @@ export function claudeUsable(config: Config, ctx: PlanContext): boolean {
 }
 
 export function buildHint(config: Config, c: Classification, ctx: PlanContext): string | null {
+  // No real signal (default tier): never push work elsewhere on a guess.
+  if (c.source === "default") return null;
   const first = planCandidates(config, c.tier, ctx).find((x) => !x.skip);
   if (!first) {
     return "hroute: every subscription is over its 5h threshold for this task. Keep the work small and tell the user routing is exhausted.";
@@ -44,6 +46,10 @@ export function routeSummary(config: Config, c: Classification, ctx: PlanContext
     .join(", ");
   const hop = first && first.tier !== c.tier ? ` [fallback tier ${first.tier}]` : "";
   const target = first?.target.id ?? null;
+  // The default tier is a placeholder, not a decision: say so instead of naming a route.
+  if (c.source === "default") {
+    return { line: `hroute: no signal (short or unmatched prompt), staying on the session model${usage ? ` | 5h: ${usage}` : ""}`, target: null };
+  }
   return { line: `hroute: ${c.tier} (${c.source}) -> ${target ?? "all exhausted"}${hop}${usage ? ` | 5h: ${usage}` : ""}`, target };
 }
 

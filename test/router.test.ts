@@ -433,3 +433,17 @@ describe("hook debug flag", () => {
     expect(out.systemMessage).toContain("claude 95%");
   });
 });
+
+describe("no-signal prompts", () => {
+  test("a short unmatched prompt gets no hint and an honest debug line", async () => {
+    const cfg = { ...HK, hook: { ...HK.hook, debug: true } };
+    const out = JSON.parse((await hook(JSON.stringify({ prompt: "who is dhh" }), cfg, ctx))!);
+    expect(out.systemMessage).toContain("no signal");
+    expect(out.systemMessage).not.toContain("codex");
+    expect(out.hookSpecificOutput).toBeUndefined();
+    expect(buildHint(HK, { tier: "impl", source: "default" }, ctx)).toBeNull();
+  });
+  test("with debug off it stays completely silent", async () => {
+    expect(await hook(JSON.stringify({ prompt: "who is dhh" }), HK, ctx)).toBeNull();
+  });
+});
