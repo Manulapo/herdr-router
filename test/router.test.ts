@@ -56,7 +56,7 @@ describe("classification", () => {
 
 describe("limit detection", () => {
   test("detects common messages", () => {
-    for (const m of ["5-hour limit reached ∙ resets 3pm", "Claude usage limit reached.", "You've hit your usage limit", "Rate limit exceeded"]) {
+    for (const m of ["5-hour limit reached ∙ resets 3pm", "Claude usage limit reached.", "You've hit your usage limit", "Rate limit exceeded", "RESOURCE_EXHAUSTED: quota", "You've reached your daily limit"]) {
       expect(detectLimit(m, DEFAULT_LIMIT_PATTERNS)).not.toBeNull();
     }
     expect(detectLimit("refactoring the limiter module", DEFAULT_LIMIT_PATTERNS)).toBeNull();
@@ -189,6 +189,7 @@ describe("hsub and subagents", () => {
     const [opus, , codex] = cfg.tiers.plan!.chain;
     expect(headlessCommand(opus!, "t")).toEqual(["claude", "-p", "--model", "opus", "t"]);
     expect(headlessCommand(codex!, "t")).toEqual(["codex", "exec", "-m", "gpt-5.5", "t"]);
+    expect(headlessCommand({ ...opus!, kind: "agy", args: ["--model", "m"] }, "t")).toEqual(["agy", "-p", "--model", "m", "t"]);
     expect(headlessCommand({ ...opus!, kind: "gemini" }, "t")).toBeNull();
   });
   test("subagent model follows live usage", () => {

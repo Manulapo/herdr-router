@@ -6,6 +6,8 @@ export const DEFAULT_LIMIT_PATTERNS: RegExp[] = [
   /\bout of (?:extra )?usage\b/i,
   /\bquota (?:exceeded|exhausted)\b/i,
   /\blimit will reset\b/i,
+  /\bresource[_ ]exhausted\b/i,
+  /you(?:'|’)ve reached your .{0,40}\blimit/i,
 ];
 
 export function detectLimit(text: string, patterns: RegExp[]): string | null {

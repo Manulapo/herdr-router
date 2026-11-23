@@ -110,7 +110,7 @@ For lookups or mechanical edits run: hsub quick "<task>"
 For a second opinion or review run:  hsub plan "<task>"
 ```
 
-`hsub` runs `claude -p` or `codex exec` on the first usable target, falls through on limit messages, parks exhausted accounts, and prints the answer on stdout (routing notes go to stderr). Gemini and other kinds work with `hroute run` but not `hsub` yet.
+`hsub` runs `claude -p` or `codex exec` on the first usable target, falls through on limit messages, parks exhausted accounts, and prints the answer on stdout (routing notes go to stderr). `hsub` supports `claude`, `codex` and `agy` (Antigravity). Other kinds work with `hroute run` only.
 
 ## Commands
 

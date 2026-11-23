@@ -9,6 +9,7 @@ import type { Attempt } from "./run.ts";
 export function headlessCommand(t: Target, task: string): string[] | null {
   if (t.kind === "claude") return ["claude", "-p", ...t.args, task];
   if (t.kind === "codex") return ["codex", "exec", ...t.args, task];
+  if (t.kind === "agy") return ["agy", "-p", ...t.args, task];
   return null;
 }
 
