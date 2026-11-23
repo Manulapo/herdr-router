@@ -98,7 +98,8 @@ This is a *hint*, not a switch: Claude decides whether to follow it. A hook cann
 
 Routed agents start with no memory. To avoid that, `hroute` keeps a small note per working directory (`Goal / Done / Next / Decisions`, capped at `max_chars`, rewritten rather than appended so it never grows).
 
-- **Written** by the `Stop` hook: it returns immediately and spawns a detached process in which Haiku rewrites the note from the previous note plus the tail of the Claude transcript. It is throttled to once per `min_interval`, and nothing you do waits on it.
+- **Summarized only when the work changes hands** (`mode = "on-switch"`, the default). The `Stop` hook just records where the conversation lives (free, no LLM). When `hroute run` / `hsub` is about to start a target on a *different account* than the origin session, and the note is older than the transcript, Haiku rewrites it once (about 5 s) before launch. Same-account handovers and repeated handovers reuse the note at no cost. `mode = "every-turn"` restores the old behavior (a background rewrite after each reply). If the origin account is exhausted and Haiku cannot run, the last note plus live git facts is used.
+- **(every-turn mode) Written** by the `Stop` hook: it returns immediately and spawns a detached process in which Haiku rewrites the note from the previous note plus the tail of the Claude transcript. It is throttled to once per `min_interval`, and nothing you do waits on it.
 - **Read** by `hroute run` and `hsub`: the note is prepended to the prompt, together with *live* git facts (branch, changed files, diff stat) that need no LLM. Notes older than `max_age` are ignored; `--no-handoff` skips it.
 - `hroute handoff show | clear | update --transcript <file>` to inspect, reset or refresh it by hand.
 

@@ -50,6 +50,7 @@ export async function runSub(
     const proc = Bun.spawn(cmd, {
       cwd: opts.cwd,
       env: { ...process.env, ...target.env, HROUTE_INNER: "1" },
+      stdin: "ignore", // codex exec waits on stdin ("Reading additional input from stdin") unless it is closed
       stdout: "pipe",
       stderr: "pipe",
       timeout: opts.timeoutMs,
@@ -67,7 +68,7 @@ export async function runSub(
       attempts.push({ target: target.id, outcome: "limit", detail: `${hit} (until ${until.toISOString()})` });
       continue;
     }
-    attempts.push({ target: target.id, outcome: exitCode === 0 ? "started" : "failed", detail: exitCode === 0 ? undefined : stderr.trim().slice(0, 200) });
+    attempts.push({ target: target.id, outcome: exitCode === 0 ? "started" : "failed", detail: exitCode === 0 ? undefined : (stderr.trim().split("\n").filter(Boolean).pop() ?? `exit ${exitCode}`).slice(0, 200) });
     return { chosen: target.id, usedTier, output: stdout, exitCode, attempts };
   }
   return { chosen: null, usedTier: null, output: "", exitCode: 2, attempts };

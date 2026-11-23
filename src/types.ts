@@ -63,6 +63,8 @@ export interface Config {
     enabled: boolean;
     maxChars: number;
     maxAgeMs: number;
+    /** on-switch: summarize only when work moves to a different agent. every-turn: after each reply. */
+    mode: "on-switch" | "every-turn";
     /** Minimum time between Haiku rewrites triggered by the Stop hook. */
     minIntervalMs: number;
   };

@@ -192,3 +192,62 @@ export function withHandoff(prompt: string, cwd: string, config: Config, dir?: s
     prompt,
   ].join("\n");
 }
+
+// ---- on-switch: summarize only when the work changes hands ------------------
+
+/** Where the live conversation is, recorded by the Stop hook for free (no LLM). */
+export interface Source {
+  transcript: string;
+  cwd: string;
+  /** Account the origin session runs under, e.g. "claude". */
+  account: string;
+  at: string;
+}
+
+export const sourcePath = (cwd: string, dir = handoffDir()) => handoffPath(cwd, dir).replace(/\.md$/, ".src.json");
+
+export function recordSource(src: Source, dir = handoffDir()): void {
+  const path = sourcePath(src.cwd, dir);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(src) + "\n");
+}
+
+export function loadSource(cwd: string, dir = handoffDir()): Source | null {
+  try {
+    return JSON.parse(readFileSync(sourcePath(cwd, dir), "utf8")) as Source;
+  } catch {
+    return null;
+  }
+}
+
+export type EnsureResult = "fresh" | "refreshed" | "no-source" | "failed";
+
+/**
+ * Make sure the note reflects the live transcript before handing over. A note
+ * newer than the transcript is reused as is, so repeated handoffs cost nothing.
+ */
+export async function ensureFreshHandoff(o: {
+  cwd: string;
+  config: Config;
+  dir?: string;
+  run?: UpdateOptions["run"];
+  now?: Date;
+}): Promise<EnsureResult> {
+  const src = loadSource(o.cwd, o.dir);
+  if (!src) return "no-source";
+  let mtime: number;
+  let jsonl: string;
+  try {
+    mtime = statSync(src.transcript).mtimeMs;
+    jsonl = readFileSync(src.transcript, "utf8");
+  } catch {
+    return "no-source";
+  }
+  const note = loadHandoff(o.cwd, o.dir);
+  if (note && new Date(note.updatedAt).getTime() >= Math.floor(mtime)) return "fresh";
+  const result = await updateHandoff({ cwd: o.cwd, convo: extractTranscriptText(jsonl, 12_000), config: o.config, dir: o.dir, run: o.run, now: o.now, force: true });
+  return result === "updated" ? "refreshed" : "failed";
+}
+
+/** A handover is "legit" when the target runs under a different account than the origin session. */
+export const isSwitch = (originAccount: string, targetAccount: string) => originAccount !== targetAccount;

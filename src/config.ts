@@ -102,6 +102,7 @@ export function parseConfig(toml: string): Config {
 
   const mode = raw.classifier?.mode ?? "auto";
   if (!["rules", "jev", "haiku", "auto"].includes(mode)) throw new Error(`classifier.mode must be rules, jev, haiku or auto`);
+  if (raw.handoff?.mode && !["on-switch", "every-turn"].includes(raw.handoff.mode)) throw new Error(`handoff.mode must be "on-switch" or "every-turn"`);
   const hookMode = raw.hook?.mode ?? "auto";
   if (hookMode !== "auto" && hookMode !== "rules") throw new Error(`hook.mode must be "auto" or "rules"`);
 
@@ -127,6 +128,7 @@ export function parseConfig(toml: string): Config {
       enabled: raw.handoff?.enabled ?? true,
       maxChars: Number(raw.handoff?.max_chars ?? 2000),
       maxAgeMs: parseDuration(raw.handoff?.max_age ?? "24h"),
+      mode: raw.handoff?.mode ?? "on-switch",
       minIntervalMs: parseDuration(raw.handoff?.min_interval ?? "2m"),
     },
     rules,

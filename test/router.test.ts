@@ -447,3 +447,51 @@ describe("no-signal prompts", () => {
     expect(await hook(JSON.stringify({ prompt: "who is dhh" }), HK, ctx)).toBeNull();
   });
 });
+
+import { ensureFreshHandoff, isSwitch, loadSource, recordSource } from "../src/handoff.ts";
+import { utimesSync } from "node:fs";
+
+describe("on-switch handoff", () => {
+  const cfg = parseConfig('[tiers.a]\nchain=["claude"]');
+  const good = async () => "## Goal\nShip it\n## Done\n- a\n## Next\n- b\n## Decisions\n- c";
+  const transcript = (dir: string) => {
+    const f = join(dir, "t.jsonl");
+    writeFileSync(f, JSON.stringify({ type: "user", message: { role: "user", content: "add pagination" } }) + "\n");
+    return f;
+  };
+  test("defaults to on-switch and rejects unknown modes", () => {
+    expect(cfg.handoff.mode).toBe("on-switch");
+    expect(() => parseConfig('[handoff]\nmode="always"\n[tiers.a]\nchain=["claude"]')).toThrow();
+  });
+  test("recording the source costs nothing and round-trips", () => {
+    const d = mk(join(tmpdir(), "hroute-s-"));
+    recordSource({ transcript: "/t", cwd: "/p", account: "claude", at: "x" }, d);
+    expect(loadSource("/p", d)?.account).toBe("claude");
+    expect(loadSource("/other", d)).toBeNull();
+  });
+  test("only a different account counts as a switch", () => {
+    expect(isSwitch("claude", "codex")).toBe(true);
+    expect(isSwitch("claude", "claude")).toBe(false);
+  });
+  test("no source -> nothing to do; stale note -> refresh; fresh note -> reuse; model failure -> failed", async () => {
+    const d = mk(join(tmpdir(), "hroute-e2-"));
+    expect(await ensureFreshHandoff({ cwd: "/p", config: cfg, dir: d, run: good })).toBe("no-source");
+
+    const t = transcript(d);
+    recordSource({ transcript: t, cwd: "/p", account: "claude", at: "x" }, d);
+    let calls = 0;
+    const counting = async (...a: Parameters<typeof good>) => (calls++, good(...a));
+    expect(await ensureFreshHandoff({ cwd: "/p", config: cfg, dir: d, run: counting })).toBe("refreshed");
+    expect(await ensureFreshHandoff({ cwd: "/p", config: cfg, dir: d, run: counting })).toBe("fresh");
+    expect(calls).toBe(1); // the second handover reused the note
+
+    const later = new Date(Date.now() + 60_000);
+    utimesSync(t, later, later); // the conversation moved on
+    expect(await ensureFreshHandoff({ cwd: "/p", config: cfg, dir: d, run: counting })).toBe("refreshed");
+    expect(calls).toBe(2);
+
+    const later2 = new Date(Date.now() + 120_000);
+    utimesSync(t, later2, later2);
+    expect(await ensureFreshHandoff({ cwd: "/p", config: cfg, dir: d, run: async () => null })).toBe("failed");
+  });
+});

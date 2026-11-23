@@ -52,7 +52,8 @@ match = ["\\b(grep|find|list|rename|typo|summari[sz]e|explain|format|lint)\\b"]
 enabled = true
 max_chars = 2000
 max_age = "24h"                # older notes are ignored
-min_interval = "2m"
+min_interval = "2m"            # every-turn mode only
+mode = "on-switch"             # summarize only when work moves to another account; "every-turn" = after each reply
 
 # ---- Accounts --------------------------------------------------------------
 # Optional. Each account is one subscription login. Without this section every

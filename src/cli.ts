@@ -9,9 +9,11 @@ import { envFilePath, isTooOpen, loadEnvFile } from "./env.ts";
 import { formatEntry, appendLog, readLog } from "./log.ts";
 import { insideHerdr } from "./herdr.ts";
 import { syncAgents } from "./agents.ts";
-import { clearHandoff, extractTranscriptText, gitFacts, handoffPath, loadHandoff, renderHandoff, updateHandoff, withHandoff } from "./handoff.ts";
+import { clearHandoff, ensureFreshHandoff, extractTranscriptText, isSwitch, loadSource, recordSource, gitFacts, handoffPath, loadHandoff, renderHandoff, updateHandoff, withHandoff } from "./handoff.ts";
 import { claudeUsable, hook, mergeHooks } from "./hook.ts";
+import { planCandidates } from "./plan.ts";
 import { run } from "./run.ts";
+import type { Config } from "./types.ts";
 import { runSub } from "./sub.ts";
 import { getUsage, writeClaudeUsage } from "./usage.ts";
 import { clearExhausted, loadState, markExhausted, statePath } from "./state.ts";
@@ -37,6 +39,19 @@ Usage:
 Config: $HROUTE_CONFIG, ./routing.toml, ~/.config/herdr-router/routing.toml
 Secrets: real environment first, then ~/.config/herdr-router/.env (or $HROUTE_ENV)
 `;
+
+/** Before handing work to another account, bring the handoff note up to date (once, only if stale). */
+async function prepareHandoff(config: Config, tier: string, cwd: string): Promise<void> {
+  if (!config.handoff.enabled || config.handoff.mode !== "on-switch") return;
+  const src = loadSource(cwd);
+  if (!src) return;
+  const ctx = { exhausted: loadState().exhausted, usage: (t: any) => getUsage(t) };
+  const first = planCandidates(config, tier, ctx).find((c) => !c.skip);
+  if (!first || !isSwitch(src.account, first.target.account)) return;
+  const r = await ensureFreshHandoff({ cwd, config });
+  if (r === "refreshed") console.error(`handoff: summarized for the switch ${src.account} -> ${first.target.account}`);
+  else if (r === "failed") console.error("handoff: summary failed, using the last note (if any) plus live git facts");
+}
 
 export async function main(argv: string[]): Promise<number> {
   loadEnvFile();
@@ -81,6 +96,7 @@ export async function main(argv: string[]): Promise<number> {
         throw new Error("Not inside a Herdr pane (HERDR_ENV!=1). Run from Herdr, or use --dry-run / explain.");
       }
       if (values.direction !== "right" && values.direction !== "down") throw new Error("--direction must be right|down");
+      if (!dryRun && !values["no-handoff"]) await prepareHandoff(config, c.tier, values.cwd ?? process.cwd());
       const result = await run(config, {
         tier: c.tier,
         prompt: values["no-handoff"] || dryRun ? prompt : withHandoff(prompt, values.cwd ?? process.cwd(), config),
@@ -156,6 +172,11 @@ export async function main(argv: string[]): Promise<number> {
             return 0;
           }
           if (!input.transcript_path) return 0;
+          if (config.handoff.mode === "on-switch") {
+            // Free bookkeeping: remember where the conversation is. The summary is made only on a model switch.
+            recordSource({ transcript: String(input.transcript_path), cwd: String(input.cwd ?? cwd), account: process.env.HROUTE_ACCOUNT ?? "claude", at: new Date().toISOString() });
+            return 0;
+          }
           const child = Bun.spawn(
             [process.execPath, process.argv[1]!, "handoff", "update", "--transcript", String(input.transcript_path), "--cwd", String(input.cwd ?? cwd)],
             { stdio: ["ignore", "ignore", "ignore"], env: { ...process.env, HROUTE_INNER: "1" } },
@@ -209,6 +230,7 @@ export async function main(argv: string[]): Promise<number> {
       if (!tier || !task) throw new Error("Usage: hroute sub <tier> <task>");
       const { config } = loadConfig();
       if (!config.tiers[tier]) throw new Error(`Unknown tier "${tier}". Defined: ${Object.keys(config.tiers).join(", ")}`);
+      if (!values["no-handoff"]) await prepareHandoff(config, tier, values.cwd ?? process.cwd());
       const fullTask = values["no-handoff"] ? task : withHandoff(task, values.cwd ?? process.cwd(), config);
       const r = await runSub(config, tier, fullTask, { cwd: values.cwd ?? process.cwd(), timeoutMs: parseDuration(values.timeout) });
       for (const a of r.attempts) if (a.outcome !== "started") console.error(`hsub: ${a.outcome} ${a.target}${a.detail ? ` - ${a.detail}` : ""}`);
