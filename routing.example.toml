@@ -1,0 +1,47 @@
+# herdr-router configuration.
+# Search order: $HROUTE_CONFIG, ./routing.toml, ~/.config/herdr-router/routing.toml
+
+default_tier = "impl"
+
+# How long to park a target when a limit is hit but no reset time can be parsed.
+default_cooldown = "2h"
+
+# Seconds to watch a freshly prompted agent for a limit message before
+# handing control back. Real work keeps running in its pane afterwards.
+probe_seconds = 10
+
+# ---- Classification --------------------------------------------------------
+# `rules` : first matching regex wins (free, instant, predictable).
+# `jev`   : rules first, then ask Jev on OpenRouter for tasks no rule matched.
+#           Needs OPENROUTER_API_KEY in the environment. Optional.
+[classifier]
+mode = "rules"
+jev_model = "typesafe/jev-router"
+jev_cost_tier = "low"          # low | medium | high
+
+[[rules]]
+tier = "plan"
+match = ["\\b(architect|design|plan|rfc|trade-?off|root cause|review)\\b"]
+
+[[rules]]
+tier = "quick"
+match = ["\\b(grep|find|list|rename|typo|summari[sz]e|explain|format|lint)\\b"]
+
+# ---- Tiers -----------------------------------------------------------------
+# A tier is an ordered fallback chain. Targets are "kind:model[:effort]".
+# Kinds are Herdr agent kinds (claude, codex, gemini, opencode, ...).
+# Use a table for full control:
+#   { kind = "claude", model = "opus", args = ["--permission-mode", "plan"] }
+[tiers.plan]
+chain = ["claude:opus", "codex:gpt-5.5:high", "claude:sonnet"]
+
+[tiers.impl]
+chain = ["claude:sonnet", "codex:gpt-5.5:medium", "claude:haiku"]
+
+[tiers.quick]
+chain = ["claude:haiku", "codex:gpt-5.5:low", "claude:sonnet"]
+
+# ---- Limit detection -------------------------------------------------------
+# Regexes (case-insensitive) matched against the agent's recent terminal output.
+# Omit to use the built-in defaults.
+# limit_patterns = ["usage limit reached", "5-hour limit reached"]
